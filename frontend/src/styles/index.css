@@ -1,0 +1,222 @@
+/* =========================================================
+   植语助手 — 全局样式与设计令牌
+   使用纯 CSS（不用 SCSS），避免额外构建依赖
+   ========================================================= */
+
+:root {
+  /* 品牌色 */
+  --gt-primary: #2f7d5d;
+  --gt-primary-dark: #24614a;
+  --gt-primary-light: #e8f3ee;
+  --gt-accent: #7cb342;
+
+  /* 语义色 */
+  --gt-success: #67c23a;
+  --gt-warning: #e6a23c;
+  --gt-danger: #f56c6c;
+  --gt-info: #909399;
+
+  /* 中性色 */
+  --gt-text: #303133;
+  --gt-text-regular: #606266;
+  --gt-text-secondary: #909399;
+  --gt-border: #e4e7ed;
+  --gt-bg: #f5f7fa;
+  --gt-bg-card: #ffffff;
+
+  --gt-radius: 8px;
+  --gt-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --gt-shadow-hover: 0 4px 16px rgba(47, 125, 93, 0.12);
+
+  --gt-header-height: 60px;
+  --gt-sidebar-width: 220px;
+  --gt-sidebar-collapsed-width: 64px;
+
+  /* 覆盖 Element Plus 主色 */
+  --el-color-primary: #2f7d5d;
+  --el-color-primary-light-3: #5d9a7e;
+  --el-color-primary-light-5: #8bb8a2;
+  --el-color-primary-light-7: #b9d5c6;
+  --el-color-primary-light-8: #d0e2d9;
+  --el-color-primary-light-9: #e8f3ee;
+  --el-color-primary-dark-2: #24614a;
+  --el-border-radius-base: 8px;
+  --el-font-size-base: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  color: var(--gt-text);
+  background: var(--gt-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--gt-primary);
+  text-decoration: none;
+}
+
+/* ---------------- 通用工具类 ---------------- */
+.gt-page {
+  padding: 16px;
+}
+
+.gt-page-title {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.gt-page-desc {
+  font-size: 13px;
+  color: var(--gt-text-secondary);
+  margin: 0 0 16px;
+}
+
+.gt-card {
+  background: var(--gt-bg-card);
+  border-radius: var(--gt-radius);
+  box-shadow: var(--gt-shadow);
+  padding: 16px;
+}
+
+.gt-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gt-section-title::before {
+  content: '';
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--gt-primary);
+}
+
+.gt-flex {
+  display: flex;
+}
+
+.gt-flex-between {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gt-flex-center {
+  display: flex;
+  align-items: center;
+}
+
+.gt-gap-8 {
+  gap: 8px;
+}
+.gt-gap-12 {
+  gap: 12px;
+}
+.gt-gap-16 {
+  gap: 16px;
+}
+
+.gt-mt-8 {
+  margin-top: 8px;
+}
+.gt-mt-16 {
+  margin-top: 16px;
+}
+.gt-mt-24 {
+  margin-top: 24px;
+}
+.gt-mb-8 {
+  margin-bottom: 8px;
+}
+.gt-mb-16 {
+  margin-bottom: 16px;
+}
+
+.gt-text-secondary {
+  color: var(--gt-text-secondary);
+}
+
+.gt-text-small {
+  font-size: 12px;
+}
+
+.gt-link {
+  color: var(--gt-primary);
+  cursor: pointer;
+}
+
+.gt-placeholder {
+  border: 1px dashed var(--gt-border);
+  border-radius: var(--gt-radius);
+  padding: 16px;
+  color: var(--gt-text-secondary);
+  font-size: 13px;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 8px,
+    rgba(0, 0, 0, 0.012) 8px,
+    rgba(0, 0, 0, 0.012) 16px
+  );
+}
+
+/* 「价值主张」类高亮块：系数拆解 / 判断依据 */
+.gt-explain {
+  background: var(--gt-primary-light);
+  border-left: 3px solid var(--gt-primary);
+  border-radius: 0 var(--gt-radius) var(--gt-radius) 0;
+  padding: 12px 16px;
+}
+
+.gt-explain-title {
+  font-weight: 600;
+  color: var(--gt-primary-dark);
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-thumb {
+  background: #c8cdd4;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #a8afb8;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 移动端适配（拍照是核心场景，必须可用） */
+@media (max-width: 768px) {
+  .gt-page {
+    padding: 12px;
+  }
+  .gt-hide-mobile {
+    display: none !important;
+  }
+}
