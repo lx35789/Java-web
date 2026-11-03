@@ -60,6 +60,16 @@
                 description="模型不太确定。可以换张更清晰的照片，或直接选一个最像的继续。"
               />
 
+              <el-alert
+                v-if="!recognition.results || recognition.results.length === 0"
+                type="warning"
+                :closable="false"
+                show-icon
+                class="gt-mb-8"
+                title="没有识别出结果"
+                description="识别服务暂时不可用（通常是还没配置 API Key）。可以换张照片重试，或点下面的「跳过这一步」，直接用症状诊断继续。"
+              />
+
               <div
                 v-for="r in recognition.results"
                 :key="r.rank"
@@ -531,6 +541,12 @@ async function startRecognize() {
 
 /** 选中一个识别结果，并拉取它的完整档案（用于判断是否有病害数据） */
 async function pickSpecies(r) {
+  // 第三方识别出的物种不一定在我们的植物库里（百度能认 2 万种，我们只有 10 种），
+  // 这时 speciesId 为 null，直接本地兜底，不要发一个注定失败的请求。
+  if (!r.speciesId) {
+    species.value = { id: null, commonName: r.commonName, emoji: r.emoji || '🌿' }
+    return
+  }
   try {
     species.value = await getSpeciesDetail(r.speciesId)
   } catch {

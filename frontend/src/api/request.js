@@ -5,7 +5,8 @@ import { getToken, removeToken } from '@/utils/auth'
 import router from '@/router'
 import { createMockAdapter } from '@/mock'
 
-const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
+const MOCK_MODE = import.meta.env.VITE_USE_MOCK || 'false'
+const USE_MOCK = MOCK_MODE === 'true'
 
 const service = axios.create({
   baseURL: import.meta.env.VITE_API_BASE || '/api/v1',
@@ -14,14 +15,43 @@ const service = axios.create({
 })
 
 /**
- * Mock 模式：直接替换 axios adapter。
- * 好处是 api/ 下的模块代码与真实模式完全一致，后端就绪后只需把
- * .env 里的 VITE_USE_MOCK 改成 false，业务代码零改动。
+ * 三种模式（.env 里的 VITE_USE_MOCK）：
+ *   true   —— 全部走 Mock
+ *   false  —— 全部走真实后端
+ *   hybrid —— 优先真实后端；后端返回 404（接口还没写）时自动回退 Mock
+ *
+ * 混合模式是给「后端接口一个一个补」的过渡期用的：
+ * 对接好的接口用真实数据，没写的继续用 Mock 顶着，页面始终可用。
  */
-if (USE_MOCK) {
+if (MOCK_MODE === 'true') {
   service.defaults.adapter = createMockAdapter()
   // eslint-disable-next-line no-console
-  console.info('[植语助手] Mock 模式已开启（VITE_USE_MOCK=true），所有接口返回示例数据')
+  console.info('[植语助手] Mock 模式（VITE_USE_MOCK=true），所有接口返回示例数据')
+} else if (MOCK_MODE === 'hybrid') {
+  const mockAdapter = createMockAdapter()
+  const realAdapter =
+    typeof axios.getAdapter === 'function' ? axios.getAdapter(axios.defaults.adapter) : axios.defaults.adapter
+
+  service.defaults.adapter = async (config) => {
+    try {
+      return await realAdapter(config)
+    } catch (err) {
+      // 只有「后端没这个接口」才回退；401/403/500/网络错误照常抛出，
+      // 否则真实故障会被 Mock 掩盖，联调时反而更难查。
+      if (err && err.response && err.response.status === 404) {
+        // eslint-disable-next-line no-console
+        console.info(
+          '[植语助手] 后端未实现，回退 Mock：',
+          String(config.method || 'get').toUpperCase(),
+          config.url
+        )
+        return mockAdapter(config)
+      }
+      throw err
+    }
+  }
+  // eslint-disable-next-line no-console
+  console.info('[植语助手] 混合模式（VITE_USE_MOCK=hybrid）：优先真实后端，未实现的接口回退 Mock')
 }
 
 /* ---------------- 请求拦截 ---------------- */

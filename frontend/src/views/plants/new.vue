@@ -197,7 +197,8 @@ async function submit() {
   submitting.value = true
   try {
     const res = await createMyPlant({ ...form })
-    ElMessage.success('已添加，养护计划已生成')
+    // carePlanGenerated 由后端返回：养护计划功能上线前为 false，提示文案要跟着走
+    ElMessage.success(res?.carePlanGenerated ? '已添加，养护计划已生成' : '已添加')
     router.push(res?.id ? `/plants/${res.id}` : '/plants')
   } finally {
     submitting.value = false

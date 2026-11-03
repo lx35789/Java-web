@@ -1,0 +1,14 @@
+# 模型文件（几十 MB，不进仓库；队友跑 training 或从发布页下载）
+models/
+models-*/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# 数据集（体积大，不进仓库）
+data/
+datasets/

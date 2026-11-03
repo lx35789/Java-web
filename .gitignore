@@ -1,0 +1,45 @@
+# ===== 依赖 =====
+node_modules/
+**/node_modules/
+
+# ===== 数据集（187 MB，绝不入库）=====
+experiments/data/
+experiments/synthetic/
+experiments/results_syn/
+*.zip
+part*.bin
+
+# ===== 可再生成的中间产物 =====
+**/__pycache__/
+*.pyc
+experiments/results/*.csv
+
+# ===== 密钥 =====
+.env.local
+*.key
+application-local.yml
+application-prod.yml
+# 含数据库密码，不进仓库；队友复制 application-dev.yml.example 即可
+application-dev.yml
+
+# ===== IDE / 系统 =====
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ===== 构建产物 =====
+dist/
+*.log
+# ===== 本地运行日志（启动脚本重定向产生）=====
+*.out
+*.err
+_ai.*
+_dev.*
+_vite.*
+_boot.*
+_run.*
+_t*.out
+_t*.err
+*.bak

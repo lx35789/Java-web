@@ -1,0 +1,63 @@
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      enabled: true
+      force: true
+
+spring:
+  application:
+    name: greenthumb-backend
+  profiles:
+    active: dev
+  jackson:
+    date-format: yyyy-MM-dd HH:mm:ss
+    time-zone: GMT+8
+    serialization:
+      write-dates-as-timestamps: false
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 20MB
+
+greenthumb:
+  # 用户上传的图片存放目录（相对 backend 运行目录）
+  upload-dir: ./data/uploads
+  # 图片对外访问前缀，与 vite.config.js 里的 '/files' 代理对应
+  files-url-prefix: /files
+  jwt:
+    # HS256 要求至少 32 字节。上线前务必换成随机值，且不要提交到仓库。
+    secret: greenthumb-dev-secret-key-please-change-in-production-2026
+    expire-hours: 72
+  recognition:
+    # 识别降级链：BAIDU → PLANTNET。两家都留空时会返回 degraded=true，前端引导手动选择。
+    # 真实 key 请填在 application-dev.yml（该文件已被 .gitignore 排除，不会进仓库）。
+    baidu:
+      api-key: ""
+      secret-key: ""
+    plantnet:
+      api-key: ""
+  # ===== 大模型兜底（OpenAI 兼容协议，换厂商只改 base-url + 模型名）=====
+  # 阿里云百炼：https://dashscope.aliyuncs.com/compatible-mode/v1   模型 qwen-vl-max / qwen-plus
+  # 智谱：      https://open.bigmodel.cn/api/paas/v4                模型 glm-4v / glm-4-flash
+  # DeepSeek：  https://api.deepseek.com/v1                         模型 deepseek-chat（无视觉）
+  # 不填 api-key 时，AI 兜底接口返回 UNAVAILABLE 并说明原因，不影响其他功能。
+  # 建议把 key 放环境变量，用 ${...} 引用，避免提交到仓库。
+  llm:
+    enabled: true
+    base-url: ${GREENTHUMB_LLM_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+    api-key: ${GREENTHUMB_LLM_API_KEY:}
+    vision-model: ${GREENTHUMB_LLM_VISION_MODEL:qwen3-vl-plus}
+    text-model: ${GREENTHUMB_LLM_TEXT_MODEL:qwen-plus}
+    timeout-ms: 30000
+  # Python AI 服务（FastAPI + ONNX Runtime）。启动方式见 ai-service/README。
+  # 服务没启动 / 模型没训练时，病害识别会自动降级为 available=false，不会影响其他功能。
+  ai-service:
+    base-url: http://localhost:8000
+    # 单张图片的识别超时；CPU 推理 224px 通常在 100ms 内，留足余量
+    timeout-ms: 6000
+
+logging:
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId}] %logger{36} - %msg%n"

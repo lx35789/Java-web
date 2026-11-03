@@ -93,7 +93,7 @@
           <div class="gt-card gt-mt-16">
             <div class="gt-flex-between gt-mb-16">
               <h3 class="gt-section-title" style="margin: 0">最近养护记录</h3>
-              <el-button text size="small" @click="router.push('/care/logs')">
+              <el-button text size="small" @click="router.push('/care?tab=logs')">
                 全部日志<el-icon><ArrowRight /></el-icon>
               </el-button>
             </div>

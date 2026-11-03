@@ -1,0 +1,139 @@
+n=4102  features=17  elapsed=14.6s
+
+== 1. per-class feature means ==
+feature           Healthy      Flood      BBWV2
+a_mean           -25.5431   -22.2504   -20.0609
+b_mean            29.0514    32.1422    27.5538
+L_mean            45.5525    50.9683    46.9509
+chroma_mean       39.1112    39.4069    34.4660
+exg_mean         104.8004    99.3801    85.8432
+sat_mean         145.2947   145.0743   133.0575
+chlorophyll       25.5431    22.2504    20.0609
+yellowness        29.0514    32.1422    27.5538
+green_frac         0.9157     0.9327     0.9052
+yellow_frac        0.7248     0.7929     0.6999
+brown_frac         0.1778     0.1607     0.1869
+dark_frac          0.0693     0.0820     0.0807
+green_ratio        0.9092     0.9054     0.8864
+yellow_ratio       0.0120     0.0183     0.0301
+brown_ratio        0.0001     0.0001     0.0001
+health_index      89.9504    89.0584    86.2219
+leaf_frac          0.5915     0.6292     0.6385
+
+== 2. per-session (date) feature means  [KEY: class is 1:1 with session] ==
+date      class         n    health yellow_frac    b_mean    a_mean    L_mean
+230418    Flood       777     88.10    0.7801    31.910   -21.914     52.43
+230420    Flood       865     89.92    0.8043    32.351   -22.553     49.66
+230608    Healthy     655     96.01    0.8677    34.171   -34.020     48.41
+230621    Healthy     670     84.03    0.5852    24.047   -17.256     42.75
+230623    BBWV2       515     86.44    0.6871    27.483   -19.911     46.94
+230627    BBWV2       620     86.04    0.7105    27.613   -20.185     46.96
+
+== 3. LAYER1 single-feature discrimination: Healthy vs Flood ==
+feature             AUC          p              AUC 95%CI
+a_mean           0.4053   6.60e-19          [0.382,0.428]
+b_mean           0.3987   2.04e-21          [0.380,0.419]
+L_mean           0.3010   9.35e-78          [0.284,0.319]
+chroma_mean      0.5043   6.85e-01          [0.483,0.527]
+exg_mean         0.5409   1.25e-04          [0.519,0.564]
+sat_mean         0.5128   2.29e-01          [0.493,0.535]
+chlorophyll      0.5947   6.60e-19          [0.572,0.618]
+yellowness       0.3987   2.04e-21          [0.380,0.419]
+green_frac       0.5402   1.61e-04          [0.519,0.561]
+yellow_frac      0.4430   9.08e-08          [0.423,0.465]
+brown_frac       0.5310   3.65e-03          [0.511,0.553]
+dark_frac        0.4561   3.85e-05          [0.435,0.479]
+green_ratio      0.5887   8.72e-17          [0.567,0.609]
+yellow_ratio     0.3807   2.20e-29          [0.360,0.401]
+brown_ratio      0.5452   1.75e-08          [0.530,0.560]
+health_index     0.5931   2.53e-18          [0.572,0.613]
+leaf_frac        0.4222   3.01e-13          [0.402,0.442]
+  BEST |AUC|: L_mean  AUC=0.6990 (raw 0.3010)
+
+== 4. LAYER4 single-feature: Flood vs BBWV2 ==
+feature             AUC          p
+a_mean           0.3739   1.14e-29
+b_mean           0.6930   3.67e-67
+L_mean           0.6496   4.60e-41
+chroma_mean      0.6776   3.69e-57
+exg_mean         0.6666   1.61e-50
+sat_mean         0.6203   3.52e-27
+chlorophyll      0.6261   1.14e-29
+yellowness       0.6930   3.67e-67
+green_frac       0.6030   2.50e-20
+yellow_frac      0.6683   1.71e-51
+brown_frac       0.4398   6.59e-08
+dark_frac        0.5177   1.11e-01
+green_ratio      0.5590   1.22e-07
+yellow_ratio     0.4778   4.54e-02
+brown_ratio      0.5078   3.10e-01
+health_index     0.5580   1.92e-07
+leaf_frac        0.4836   1.40e-01
+
+== 5. SESSION-PAIRWISE AUC (does any flood session separate from any healthy session?) ==
+metric         flood      healthy         AUC        p
+health_index   230418     230608       0.8206 2.86e-97
+yellow_frac    230418     230608       0.6750 3.09e-30
+b_mean         230418     230608       0.5970 2.40e-10
+health_index   230418     230621       0.4176 6.27e-08
+yellow_frac    230418     230621       0.2534 5.43e-59
+b_mean         230418     230621       0.2184 2.24e-76
+health_index   230420     230608       0.7796 5.94e-78
+yellow_frac    230420     230608       0.6348 1.99e-19
+b_mean         230420     230608       0.5860 9.06e-09
+health_index   230420     230621       0.3686 9.54e-19
+yellow_frac    230420     230621       0.2221 4.85e-78
+b_mean         230420     230621       0.2033 1.20e-88
+
+== 6. VARIANCE DECOMPOSITION (PV family, metric = health_index) ==
+  metric=health_index  total_var=96.584
+    session(date)    24.704   25.6%
+    plant            28.894   29.9%
+    plant-view        9.571    9.9%
+    leaf (within)    33.414   34.6%
+    -> session sd=4.97  leaf sd=5.78  ratio=1.16
+  metric=yellow_frac  total_var=0.044
+    session(date)     0.014   31.9%
+    plant             0.008   18.0%
+    plant-view        0.004   10.2%
+    leaf (within)     0.017   39.9%
+    -> session sd=0.12  leaf sd=0.13  ratio=1.12
+  metric=b_mean  total_var=65.752
+    session(date)    18.894   28.7%
+    plant            11.745   17.9%
+    plant-view        7.352   11.2%
+    leaf (within)    27.761   42.2%
+    -> session sd=4.35  leaf sd=5.27  ratio=1.21
+  metric=a_mean  total_var=76.697
+    session(date)    49.943   65.1%
+    plant            14.781   19.3%
+    plant-view        4.740    6.2%
+    leaf (within)     7.233    9.4%
+    -> session sd=7.07  leaf sd=2.69  ratio=0.38
+
+== 7. PAIRED ANALYSIS: same (prefix,plant,view), 230418(Flood) -> 230608(Healthy) ==
+  paired plant-views: 82
+feature          mean_delta    std_delta wilcoxon_p pairs_delta>0
+a_mean             -10.8947       6.8664   5.71e-14      5/82
+b_mean               1.6231       6.7250   1.37e-02     53/82
+L_mean              -5.4243       7.4926   1.05e-07     23/82
+chroma_mean          8.2408       8.6362   1.80e-10     70/82
+exg_mean            34.7815      28.6972   2.08e-12     74/82
+sat_mean            23.2280      24.7141   3.48e-10     67/82
+chlorophyll         10.8947       6.8664   5.71e-14     77/82
+yellowness           1.6231       6.7250   1.37e-02     53/82
+green_frac           0.0299       0.0484   7.43e-09     64/82
+yellow_frac          0.0583       0.1440   7.37e-05     62/82
+brown_frac          -0.0193       0.0987   2.62e-01     42/82
+dark_frac           -0.0121       0.0500   8.51e-02     34/82
+green_ratio          0.0440       0.0542   1.51e-11     70/82
+yellow_ratio        -0.0109       0.0168   4.26e-09     21/82
+brown_ratio          0.0000       0.0003   1.56e-01     48/82
+health_index         5.2736       6.2747   2.15e-12     72/82
+leaf_frac           -0.0545       0.1317   6.40e-04     30/82
+
+== 8. MULTIVARIATE LDA, 5-fold CV grouped by (prefix,plant)  [PV family only] ==
+  Healthy vs Flood   n=2096  groups=124  CV_AUC(class 1 higher)=0.9526
+  Flood vs BBWV2     n=777   groups=69   CV_AUC(class 2 higher)=nan
+
+elapsed 37.6s

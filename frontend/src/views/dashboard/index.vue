@@ -48,7 +48,7 @@
       <div class="gt-card">
         <div class="gt-flex-between gt-mb-16">
           <h3 class="gt-section-title" style="margin: 0">今日待办</h3>
-          <el-button text size="small" @click="router.push('/care/calendar')">
+          <el-button text size="small" @click="router.push('/care?tab=calendar')">
             查看日历<el-icon><ArrowRight /></el-icon>
           </el-button>
         </div>
@@ -169,7 +169,7 @@ const quickLinks = [
   { path: '/diagnose', label: '智能诊断', icon: 'FirstAidKit', color: '#F56C6C' },
   { path: '/qa', label: 'AI 问答', icon: 'ChatDotRound', color: '#409EFF' },
   { path: '/plants/new', label: '添加植物', icon: 'Plus', color: '#67C23A' },
-  { path: '/care/calendar', label: '养护日历', icon: 'Calendar', color: '#909399' }
+  { path: '/care?tab=calendar', label: '养护日历', icon: 'Calendar', color: '#909399' }
 ]
 
 /* ---------------- 图表配置 ---------------- */

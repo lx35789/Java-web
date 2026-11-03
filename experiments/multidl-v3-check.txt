@@ -1,0 +1,32 @@
+=== 1. 语法 ===
+  [PASS] 语法正确
+=== 2. 导入 ===
+  [PASS] import 成功
+  [PASS] UA_PROFILES 有 3 档
+  [PASS] 第一档是 curl（实测能过 WAF）
+  [PASS] 有 probe / simple_download / download_chunk / verify
+
+=== 3. 请求头不含会被拦的伪装 ===
+  [PASS] curl 档不伪装浏览器
+  [PASS] chrome 档带完整特征头（Sec-Fetch 等）
+
+=== 4. 分块逻辑 ===
+  [PASS] 89.9MB -> 23 段
+  [PASS] 覆盖完整
+  [PASS] 段间无空隙
+
+=== 5. MD5 / verify ===
+  [PASS] MD5 一致
+  [PASS] 校验通过返回 0
+  [PASS] 通过后删进度文件
+  [PASS] 校验失败返回 3
+  [PASS] 失败时保留进度
+
+=== 6. 参数解析 ===
+  [PASS] -n 24 解析
+  [PASS] --ua curl 解析
+
+==============================================
+  通过 17 项，失败 0 项
+==============================================
+未覆盖：真实 HTTP 传输（沙箱拦截网络）

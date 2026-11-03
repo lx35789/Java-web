@@ -1,0 +1,50 @@
+pairs=82
+
+== T1. Stratified by Delta(L*) -- does the signal survive in EVERY stratum? ==
+   (v4's "residual same-sign" test was invalid: OLS residuals are zero-mean by construction)
+  T1a brightness DROPPED most (tertile 1)  n=27  dL*= -13.57  d_chlorophyll= +6.596 (sd  7.69)  t=  4.46 p=1.40e-04  >0: 22/27 (binom p=1.51e-03)
+  T1b brightness unchanged   (tertile 2)   n=28  dL*=  -5.96  d_chlorophyll=+10.373 (sd  4.94)  t= 11.12 p=1.40e-11  >0: 28/28 (binom p=7.45e-09)
+  T1c brightness ROSE most   (tertile 3)   n=27  dL*=  +3.28  d_chlorophyll=+15.735 (sd  4.32)  t= 18.93 p=9.92e-17  >0: 27/27 (binom p=1.49e-08)
+
+== T2. Regression: expected change when illumination does NOT change ==
+  fit   : d_chlorophyll = 0.5174 * dL* + 13.7013      R^2 = 0.3188 (p = 3.30e-08)
+  intercept = +13.7013  (SE 0.7791, t = 17.59, p = 0.00e+00)
+  -> at ZERO illumination change the expected chlorophyll gain is +13.70 (p=0.0e+00)
+  T3. illumination explains R^2 = 31.9% of the VARIANCE of the paired change
+
+== T4. Noise reduction needed (single before/after, true change = measured mean) ==
+  true change = 10.895   paired-difference sd = 6.866   Cohen d = 1.59
+  current direction accuracy = Phi(d) = 94.4%   (measured same-sign = 93.9%)
+  noise x    sigma        accuracy   how to get there
+  1.00       6.866        94.4      % baseline (this dataset)
+  0.85       5.836        96.9      % same leaf + fixed position
+  0.70       4.807        98.8      % same leaf + fixed light + 3 shots averaged (1/sqrt(2))
+  0.58       3.983        99.7      % 3 shots averaged AND same leaf (1/sqrt(3))
+
+== T5. Can an incomparable capture session be DETECTED (QC gate)? ==
+  L_mean      session means 52.4 49.7 48.4 42.8 46.9 47.0
+              between-session sd = 3.23   within-session sd = 6.92   separability = 0.47
+  bg_L        session means 2.4 1.9 3.6 1.5 3.8 2.4
+              between-session sd = 0.92   within-session sd = 4.74   separability = 0.19
+  leaf_frac   session means 0.6 0.6 0.6 0.6 0.7 0.6
+              between-session sd = 0.03   within-session sd = 0.15   separability = 0.17
+  -> if separability > 1, a session-level outlier gate is implementable
+  L* global median = 48.1  MAD-sigma = 7.62
+    230418  median L* =  53.0   |z| = 0.65  ok
+    230420  median L* =  50.2   |z| = 0.28  ok
+    230608  median L* =  48.9   |z| = 0.11  ok
+    230621  median L* =  42.7   |z| = 0.70  ok
+    230623  median L* =  47.0   |z| = 0.13  ok
+    230627  median L* =  47.3   |z| = 0.10  ok
+
+== T6. VERDICT ==
+  1. The paired change survives conditioning on illumination:
+     - in EVERY brightness stratum the chlorophyll gain is positive and significant (T1)
+     - at zero illumination change the expected gain is +13.70 (p=0.0e+00) (T2)
+     - illumination explains only 31.9% of the change variance (T3)
+     - background brightness change is UNCORRELATED with it (r=0.052, p=0.64)
+  2. But session still dominates total variance (65-69%% for a*), so the
+     ABSOLUTE colour level is NOT comparable across sessions.
+  3. Conclusion: the RELATIVE, same-plant, same-leaf signal is real and usable;
+     the ABSOLUTE cross-session level is not. The product must never compare
+     a photo to a population norm -- only to the same plant's own history.

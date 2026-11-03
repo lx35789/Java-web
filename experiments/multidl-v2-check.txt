@@ -1,0 +1,48 @@
+=== 1. 语法 ===
+  [PASS] multidl.py v2 语法正确
+
+=== 2. 导入（会加载 requests）===
+  [PASS] import multidl 成功
+
+  CHUNK = 4194304 字节 (4.0 MB)
+  有 new_session: True
+  有 probe      : True
+  有 simple_download: True
+  有 download_chunk : True
+  有 verify     : True
+
+  [PASS] 关键函数齐全
+
+=== 3. session 构造（不联网）===
+  [PASS] new_session 构造成功
+
+  [PASS] UA 已设置
+
+  [PASS] Accept-Encoding=identity（避免 gzip 干扰分块）
+
+=== 4. 分块与续传判定 ===
+  [PASS] 89.9MB / 4MB -> 23 段
+
+  [PASS] 覆盖完整 0 .. size-1
+
+  [PASS] 段间无空隙
+
+  [PASS] 已完成 3 段后待下载 20 段
+
+=== 5. MD5 ===
+  [PASS] MD5 与标准库一致
+
+=== 6. verify() 行为 ===
+  [PASS] MD5 正确时返回 0
+
+  [PASS] 校验通过后删除进度文件
+
+  [PASS] MD5 错误时返回 3
+
+  [PASS] 校验失败时保留进度文件
+
+==============================================
+  通过 15 项，失败 0 项
+==============================================
+
+未覆盖：真实 HTTP 传输（沙箱会拦截网络操作）

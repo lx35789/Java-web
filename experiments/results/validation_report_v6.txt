@@ -1,0 +1,46 @@
+== 1. WHICH PROBE RECOVERS THE ILLUMINANT? (separability = between-session sd / within-session sd) ==
+probe          between_sd    within_sd separability usable?
+ill_a               7.426        6.009        1.236 YES
+ill_b               4.209        7.171        0.587 no
+ill_L               4.301        5.483        0.784 no
+dark_a              0.886        4.816        0.184 no
+dark_b              2.241        7.632        0.294 no
+a_mean              5.874        5.286        1.111 YES
+b_mean              3.823        6.527        0.586 no
+L_mean              3.229        6.925        0.466 no
+sat_leaf           13.181       29.800        0.442 no
+   session means ill_a: -13.43 -15.93 -32.36 -12.25 -15.29 -15.66
+   session means ill_b:  18.31  22.86  28.54  16.41  20.95  20.41
+   session means dark_a: -11.56 -10.57 -11.26 -11.79 -12.09  -9.70
+
+== 2. DOES ILLUMINANT NORMALISATION REMOVE THE SESSION EFFECT? ==
+metric          session var %     leaf var %
+a_mean                  69.4%          10.1%
+a_ill                   43.9%          43.4%
+a_dark                  57.9%          18.9%
+b_mean                  32.4%          47.5%
+b_ill                   25.9%          58.0%
+chlorophyll             69.4%          10.1%
+chloro_ill              43.9%          43.4%
+
+== 3. PAIRED SIGNAL BEFORE vs AFTER ILLUMINANT NORMALISATION (n=82) ==
+metric           mean_delta     sd_delta    cohen_d    same_sign
+chlorophyll        +10.8947       6.8664       1.59        93.9%
+chloro_ill          -6.7573       3.4809      -1.94        96.3%
+chloro_dark        +11.2206       9.1606       1.22        91.5%
+a_mean             -10.8947       6.8664      -1.59        93.9%
+a_ill               +6.7573       3.4809       1.94        96.3%
+b_mean              +1.6231       6.7250       0.24        64.6%
+b_ill               -7.5153       4.6233      -1.63        92.7%
+
+== 4. QC GATE: can an incomparable session be flagged? ==
+ill_a      separability=1.24   session |z|: 230418=0.2 230420=0.1 230608=2.3 230621=0.4 230623=0.0 230627=0.1   flagged: ['230608']
+ill_b      separability=0.59   session |z|: 230418=0.3 230420=0.2 230608=0.8 230621=0.5 230623=0.0 230627=0.1   flagged: none
+a_mean     separability=1.11   session |z|: 230418=0.1 230420=0.2 230608=1.8 230621=0.5 230623=0.2 230627=0.1   flagged: none
+L_mean     separability=0.47   session |z|: 230418=0.6 230420=0.2 230608=0.0 230621=0.7 230623=0.1 230627=0.1   flagged: none
+
+== 5. VERDICT ==
+   best illuminant probe separability: ill_a=1.24  ill_b=0.59  dark_a=0.18
+   a* session variance: raw 69.4% -> ill-normalised 43.9% -> dark-normalised 57.9%
+
+elapsed 15.1s

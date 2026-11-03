@@ -20,28 +20,14 @@ const routes = [
   {
     path: '/',
     component: () => import('@/layouts/DefaultLayout.vue'),
-    redirect: '/dashboard',
+    redirect: '/plants',
     children: [
-      {
-        path: 'dashboard',
-        name: 'Dashboard',
-        component: () => import('@/views/dashboard/index.vue'),
-        meta: { title: '统计看板', icon: 'Odometer' }
-      },
+      // 第七周：首页改为「我的植物」；统计看板从前端移除（仅保留重定向，避免旧书签 404）
+      { path: 'dashboard', redirect: '/plants' },
 
-      /* --- 植物库 --- */
-      {
-        path: 'species',
-        name: 'SpeciesList',
-        component: () => import('@/views/species/index.vue'),
-        meta: { title: '植物库' }
-      },
-      {
-        path: 'species/:id',
-        name: 'SpeciesDetail',
-        component: () => import('@/views/species/detail.vue'),
-        meta: { title: '植物详情', hidden: true, activeMenu: '/species' }
-      },
+      // 旧「植物库」入口已移除；物种数据仅供「添加植物」时的选择器使用
+      { path: 'species', redirect: '/plants' },
+      { path: 'species/:id', redirect: '/plants' },
 
       /* --- 我的植物 --- */
       {
@@ -92,32 +78,20 @@ const routes = [
         component: () => import('@/views/diagnose/records.vue'),
         meta: { title: '诊断记录', hidden: true, activeMenu: '/diagnose' }
       },
-      {
-        path: 'qa',
-        name: 'Qa',
-        component: () => import('@/views/qa/index.vue'),
-        meta: { title: 'AI 问答' }
-      },
+      // 第七周：AI 问答从前端移除（问答能力已并入诊断第 2 步的养护建议）
+      { path: 'qa', redirect: '/diagnose' },
 
-      /* --- 养护 --- */
+      /* --- 养护：三个页面合并为一个「养护中心」，页内 Tab 切换 --- */
       {
-        path: 'care/calendar',
-        name: 'CareCalendar',
-        component: () => import('@/views/care/calendar.vue'),
-        meta: { title: '养护日历' }
+        path: 'care',
+        name: 'CareCenter',
+        component: () => import('@/views/care/index.vue'),
+        meta: { title: '养护中心' }
       },
-      {
-        path: 'care/plans',
-        name: 'CarePlans',
-        component: () => import('@/views/care/plans.vue'),
-        meta: { title: '养护计划' }
-      },
-      {
-        path: 'care/logs',
-        name: 'CareLogs',
-        component: () => import('@/views/care/logs.vue'),
-        meta: { title: '养护日志' }
-      },
+      // 兼容旧链接与外部跳转
+      { path: 'care/calendar', redirect: { path: '/care', query: { tab: 'calendar' } } },
+      { path: 'care/plans', redirect: { path: '/care', query: { tab: 'plans' } } },
+      { path: 'care/logs', redirect: { path: '/care', query: { tab: 'logs' } } },
 
       /* --- 我的 --- */
       {
@@ -202,14 +176,14 @@ router.beforeEach((to) => {
   }
 
   // 已登录时访问登录页 → 回首页
-  if (WHITE_LIST.includes(to.path)) return { path: '/dashboard' }
+  if (WHITE_LIST.includes(to.path)) return { path: '/plants' }
 
   // 管理端权限
   if (to.meta.requiresAdmin) {
     const user = getCachedUser()
     if (user?.role !== 'ADMIN') {
       ElMessage.warning('需要管理员权限')
-      return { path: '/dashboard' }
+      return { path: '/plants' }
     }
   }
 

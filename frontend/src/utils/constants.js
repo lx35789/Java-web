@@ -109,7 +109,9 @@ export const RECOGNITION_PROVIDER = {
   BAIDU: { label: '百度植物识别', type: 'primary' },
   PLANTNET: { label: 'Pl@ntNet', type: 'warning' },
   SELF_MODEL: { label: '自研模型', type: 'success' },
-  KINDWISE: { label: 'Plant.id', type: 'info' }
+  KINDWISE: { label: 'Plant.id', type: 'info' },
+  /** 所有通道都不可用（通常是还没配 API Key） */
+  NONE: { label: '识别服务未配置', type: 'info' }
 }
 
 /** 置信度分档 —— 用于统一的颜色/文案表达 */
@@ -189,7 +191,11 @@ export const CAUSE_CATEGORIES = {
  * 生产环境应改为 plant_species 表上的 disease_covered 字段，由后端下发，
  * 这样新增物种时不用改前端。
  */
-export const DISEASE_COVERED_SPECIES = ['绿萝', '虎皮兰', '芦荟', '吊兰', '仙人掌', '多肉', '玉露']
+// 病害识别覆盖的物种 —— 必须与 ai-service/models/labels.json 里实际训练到的物种严格对齐。
+// 当前模型训练自 indoor-plant-disease-dataset（6 物种 29 类）。
+// 改了模型一定要同步改这里，否则会两个方向都出错：
+//   模型认识的被当成"暂无数据"跳过；模型不认识的反而硬跑出错误结论。
+export const DISEASE_COVERED_SPECIES = ['绿萝', '芦荟', '月季', '姜黄', '扶桑', '菊花']
 
 export const URGENCY = {
   LOW: { label: '不急', type: 'info' },
@@ -229,6 +235,8 @@ export const ERROR_CODES = {
   1003: '无权限访问该资源',
   1004: '资源不存在',
   2001: '用户名已存在',
+  2002: '用户名或密码错误',
+  2003: '账号已被禁用',
   3001: '图片格式不支持（仅 jpg/png，且不超过 10MB）',
   3002: '识别服务暂时不可用',
   3003: '今日 AI 识别次数已用完',

@@ -1,0 +1,49 @@
+pairs=82
+
+== 1. which covariate actually tracks the paired change? ==
+Delta covariate       pearson_r          p        R^2
+Delta ill_a (highlight)       -0.890   5.38e-29      0.792
+Delta L* (brightness)        0.565   3.30e-08      0.319
+  corr(Delta ill_a, Delta L*) = -0.494   (how redundant are the two proxies)
+
+== 2. control for the illuminant: does Delta(chlorophyll) survive? ==
+  d_chlorophyll = -0.8010 * d_ill_a + -3.2448      R^2 = 0.7919 (p = 5.38e-29)
+  intercept = -3.2448 (SE 0.8820, t = -3.68, p = 4.23e-04)
+  -> controlling for the illuminant, expected chlorophyll change = -3.24 (p=4.2e-04)
+
+== 3. tertiles by Delta ill_a (the GOOD proxy) ==
+stratum           n    d_ill_a     d_chloro       sd          t  same-sign
+ill_a DROP       27     -25.57       17.147     3.14      28.37 27/27 p=1.5e-08
+ill_a MID        28     -18.02       11.264     4.18      14.27 28/28 p=7.5e-09
+ill_a RISE       27      -9.36        4.260     5.70       3.89 22/27 p=1.5e-03
+
+== 4. same, for the illuminant-NORMALISED metric ==
+stratum           n    d_ill_a d_chloro_ill       sd          t  same-sign
+ill_a DROP       27     -25.57       -8.420     2.60     -16.81 27/27 p=1.5e-08
+ill_a MID        28     -18.02       -6.754     3.20     -11.17 27/28 p=2.2e-07
+ill_a RISE       27      -9.36       -5.098     3.82      -6.93 25/27 p=5.6e-06
+
+== 5. head-to-head: which metric is more internally consistent? ==
+metric              cohen_d     sd_delta    same_sign
+chlorophyll            1.59       6.8664        93.9%
+chloro_ill            -1.94       3.4809        96.3%
+
+== 6. does the 230608 illuminant outlier explain the anomaly? ==
+  date           ill_a      leaf a*
+  230418        -13.43       -21.91
+  230420        -15.93       -22.55
+  230608        -32.36       -34.02
+  230621        -12.25       -17.26
+  230623        -15.29       -19.91
+  230627        -15.66       -20.19
+  across 6 sessions corr(illuminant a*, leaf a*) = 0.968 (p=0.002, n=6)
+
+== 7. VERDICT ==
+  ILLUMINANT IS RECOVERABLE (weakly): specular-highlight a*, separability 1.24 vs L* 0.47
+  -> the 230608 session is an ILLUMINATION outlier (|z|=2.3), independently confirming the
+     session confound diagnosed earlier.
+  -> highlight normalisation cuts a* session variance from 69.4%% to 43.9%%.
+  -> BUT it FLIPS the sign of the paired change: raw d=+10.89, normalised d=-6.76.
+  -> raw  same-sign 93.9%   normalised same-sign 96.3%
+  => The MEASUREMENT is reproducible, but the DIRECTION of the biological effect is
+     NOT established by this dataset: it depends on which illumination model you adopt.

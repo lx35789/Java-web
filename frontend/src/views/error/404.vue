@@ -5,7 +5,7 @@
     <p class="nf-title">这盆植物找不到了</p>
     <p class="nf-desc">页面可能已被移走，或者链接不太对</p>
     <div class="nf-actions">
-      <el-button type="primary" @click="router.push('/dashboard')">回到看板</el-button>
+      <el-button type="primary" @click="router.push('/plants')">回到看板</el-button>
       <el-button @click="router.back()">返回上一页</el-button>
     </div>
   </div>

@@ -1,0 +1,60 @@
+pairs = 82   scipy = True
+
+== 1. paired deltas (mean +/- sd) ==
+  chlorophyll      +10.8947 +/-   6.8664
+  a_mean           -10.8947 +/-   6.8664
+  b_mean            +1.6231 +/-   6.7250
+  L_mean            -5.4243 +/-   7.4926
+  chroma_mean       +8.2408 +/-   8.6362
+  health_index      +5.2736 +/-   6.2747
+  exg_mean         +34.7815 +/-  28.6972
+  green_ratio       +0.0440 +/-   0.0542
+  yellow_ratio      -0.0109 +/-   0.0168
+  bg_L              +1.6241 +/-   2.6393
+  bg_a              -1.6542 +/-   2.5931
+  bg_b              +3.0776 +/-   2.7279
+  leaf_frac         -0.0545 +/-   0.1317
+
+== 2. Is the change driven by illumination?  corr(Delta metric, Delta L*) ==
+metric          pearson_r          p   spearman        R^2
+chlorophyll         0.565   3.30e-08      0.551      0.319
+a_mean             -0.565   3.30e-08     -0.551      0.319
+b_mean              0.458   1.51e-05      0.466      0.210
+chroma_mean         0.555   6.11e-08      0.577      0.308
+health_index        0.330   2.47e-03      0.299      0.109
+exg_mean            0.583   8.83e-09      0.593      0.340
+green_ratio         0.312   4.38e-03      0.280      0.097
+yellow_ratio       -0.287   8.93e-03     -0.309      0.082
+bg_L                0.157   1.59e-01      0.159      0.025
+bg_a                0.048   6.71e-01     -0.009      0.002
+bg_b               -0.138   2.16e-01     -0.093      0.019
+leaf_frac           0.047   6.77e-01      0.062      0.002
+
+== 3. Same check against background brightness change (Delta bg_L) ==
+metric          pearson_r          p
+chlorophyll         0.052   6.44e-01
+a_mean             -0.052   6.44e-01
+b_mean              0.199   7.31e-02
+health_index        0.400   1.95e-04
+exg_mean            0.080   4.77e-01
+
+== 4. Remove the illumination component, does the signal survive? ==
+   regress Delta(chlorophyll) on Delta(L*); test the sign of the residual
+   fit: d_chlorophyll = 0.5174 * dL + 13.7013     (R^2 = 0.3188, p = 3.30e-08)
+   raw   Delta: mean=+10.8947 sd= 6.8664  same-sign= 93.9%
+   resid Delta: mean= -0.0000 sd= 5.6673  same-sign= 51.2%
+   residual Wilcoxon p = 9.208e-01
+
+== 5. Split pairs by how much brightness changed ==
+  brightness DROPPED most  n=41  dL*=-11.809   d_chlorophyll=  +7.707 (sd  6.899)
+  brightness ROSE most     n=41  dL*= +0.960   d_chlorophyll= +14.082 (sd  5.202)
+
+== 6. Illumination-corrected metric across ALL images ==
+   beta = 0.2636
+   chlorophyll  session%= 69.4  leaf%= 10.1
+   chloro_lc    session%= 68.7  leaf%= 11.5
+
+== 7. VERDICT ==
+   corr(d_chlorophyll, dL*) = 0.565  -> illumination explains 31.9% of the paired change
+   after removing illumination, same-sign rate = 51.2% (raw 93.9%)
+   => the change is largely explained by illumination -> NOT usable as a biological signal

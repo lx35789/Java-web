@@ -1,0 +1,58 @@
+# ============================================================
+# 开发环境配置模板
+#
+# 用法：把本文件复制一份，改名为 application-dev.yml，然后填上你自己的 MySQL 密码。
+#   copy application-dev.yml.example application-dev.yml      (Windows CMD)
+#
+# application-dev.yml 已被 .gitignore 排除，不会提交到仓库 ——
+# 所以数据库密码只留在各自机器上。
+# ============================================================
+
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: "jdbc:mysql://localhost:3306/greenthumb?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false"
+    username: root
+    # ↓↓↓ 改成你自己的 MySQL 密码 ↓↓↓
+    password: your-mysql-password
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 5000
+      pool-name: GreenThumbHikariPool
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    # 开发期把执行的 SQL 打到控制台，方便排查；生产环境请删掉这行
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    banner: false
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+logging:
+  level:
+    root: info
+    com.greenthumb: debug
+    org.springframework.web: info
+
+# ============================================================
+# 识别服务（可选）
+# 不填也能跑：识别接口会返回 degraded=true，前端引导用户手动选择物种。
+# 填了哪家就自动启用哪家，降级链顺序：百度 → Pl@ntNet
+#
+# 百度 AI 开放平台（「图像识别 → 植物识别」，有免费额度）：
+#   https://console.bce.baidu.com/ai/  创建应用后拿 API_KEY / SECRET_KEY
+# Pl@ntNet（免费 500 次/天）：
+#   https://my.plantnet.org/  注册后在 settings 里拿 API key
+# ============================================================
+greenthumb:
+  recognition:
+    baidu:
+      api-key: ""
+      secret-key: ""
+    plantnet:
+      api-key: ""

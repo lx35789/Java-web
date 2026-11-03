@@ -1,35 +1,30 @@
 /**
  * 侧边栏菜单配置
  * 与 router 的 path 严格对应；icon 为已全局注册的 Element Plus 图标名
+ *
+ * 第七周调整：
+ *   - 去掉「统计看板」「植物库」「AI 问答」——用户不需要这么繁琐的入口
+ *   - 「添加植物」并入「我的植物」页面内的按钮，不再单独占菜单
+ *   - 「养护日历 / 计划 / 日志」合并为一个「养护中心」（页内 Tab 切换）
  */
 
 export const MENU_GROUPS = [
   {
-    title: '概览',
-    items: [{ path: '/dashboard', title: '统计看板', icon: 'Odometer' }]
-  },
-  {
     title: '我的植物',
-    items: [
-      { path: '/plants', title: '我的植物', icon: 'House' },
-      { path: '/species', title: '植物库', icon: 'Collection' },
-      { path: '/plants/new', title: '添加植物', icon: 'Plus' }
-    ]
+    items: [{ path: '/plants', title: '我的植物', icon: 'House' }]
   },
   {
     title: 'AI 能力',
     items: [
-      { path: '/recognize', title: '拍照识别', icon: 'Camera' },
-      { path: '/diagnose', title: '智能诊断', icon: 'FirstAidKit', badge: '核心' },
-      { path: '/qa', title: 'AI 问答', icon: 'ChatDotRound' }
+      // 「拍照识别」已并入「智能诊断」的第 1 步，不再单独占一个菜单入口。
+      { path: '/diagnose', title: '智能诊断', icon: 'FirstAidKit', badge: '核心' }
     ]
   },
   {
     title: '养护',
     items: [
-      { path: '/care/calendar', title: '养护日历', icon: 'Calendar' },
-      { path: '/care/plans', title: '养护计划', icon: 'Clock' },
-      { path: '/care/logs', title: '养护日志', icon: 'Document' }
+      // 日历 / 计划 / 日志 三个页面合并为一个入口，页内用 Tab 切换
+      { path: '/care', title: '养护中心', icon: 'Calendar' }
     ]
   },
   {

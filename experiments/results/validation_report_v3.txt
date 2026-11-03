@@ -1,0 +1,63 @@
+n=4102
+
+== 1. IS THE BACKGROUND A USABLE ILLUMINATION REFERENCE? ==
+global bg reference: L*=0.78  a*=2.00  b*=-4.00
+date      class         n      bg_L  sd(bg_L)      bg_a      bg_b  bg_frac
+230418    Flood       777      2.35     6.074     4.659    -5.385    0.556
+230420    Flood       865      1.88     4.167     3.838    -4.363    0.563
+230608    Healthy     655      3.63     5.837     2.750    -2.153    0.576
+230621    Healthy     670      1.55     5.982     2.987    -3.207    0.601
+230623    BBWV2       515      3.80     6.613     4.600    -2.996    0.493
+230627    BBWV2       620      2.41     5.623     3.073    -2.935    0.559
+  bg_a  within-session sd (mean) = 3.495
+  bg_a  between-session sd      = 0.841
+  ratio between/within          = 0.24  -> NOT usable
+
+== 2. DOES BACKGROUND NORMALISATION REMOVE THE SESSION EFFECT? ==
+metric            raw sess%    adj sess%  raw sd_sess  adj sd_sess
+a_mean                65.1%        64.9%        7.067        6.809
+b_mean                28.7%        27.3%        4.347        4.525
+L_mean                23.0%        17.3%        3.967        3.643
+health_index          25.6%        25.6%        4.970        4.970
+
+== 3. THE REAL SIGNAL: same plant+view, 230418(Flood) -> 230608(Healthy), n=82 ==
+metric           mean_delta     sd_delta    cohen_d       Phi(d) pairs_same_sign
+chlorophyll         10.8947       6.8664       1.59        94.4%       93.9%
+chloro_adj           9.2405       6.1320       1.51        93.4%       95.1%
+a_mean             -10.8947       6.8664      -1.59        94.4%       93.9%
+health_index         5.2736       6.2747       0.84        80.0%       87.8%
+exg_mean            34.7815      28.6972       1.21        88.7%       90.2%
+green_ratio          0.0440       0.0542       0.81        79.2%       85.4%
+yellow_ratio        -0.0109       0.0168      -0.65        74.3%       73.2%
+L_mean              -5.4243       7.4926      -0.72        76.5%       72.0%
+b_mean               1.6231       6.7250       0.24        59.5%       64.6%
+
+== 4. FEASIBILITY: P(correct direction) FOR A SINGLE BEFORE/AFTER COMPARISON ==
+   model: observed delta = true change + noise;  accuracy = Phi(true_change / sigma)
+   true_change taken as the measured paired mean delta above.
+metric          sigma_raw  same_leaf   leaf/1.4   leaf/1.7  sigma=2.0  sigma=1.0
+chlorophyll         89.3%     100.0%     100.0%     100.0%     100.0%     100.0%
+(sigma)             8.76       2.69       1.92       1.58       2.00       1.00 
+chloro_adj          86.3%      99.9%     100.0%     100.0%     100.0%     100.0%
+(sigma)             8.45       3.08       2.20       1.81       2.00       1.00 
+
+== 5. HOW SMALL MUST sigma BE? (target direction accuracy) ==
+metric          sigma_90%  sigma_95%  sigma_99% true_change
+chlorophyll         8.501      6.624      4.683     10.895
+chloro_adj          7.210      5.618      3.972      9.241
+health_index        4.115      3.206      2.267      5.274
+exg_mean           27.140     21.146     14.951     34.781
+
+== 6. HOW MANY PHOTOS PER SESSION? (averaging n shots -> sigma/sqrt(n)) ==
+metric              n=1      n=3      n=5      n=9     n=20
+chlorophyll      100.0%   100.0%   100.0%   100.0%   100.0%
+(sigma@n)         2.69     1.55     1.20     0.90     0.60 
+chloro_adj        99.9%   100.0%   100.0%   100.0%   100.0%
+(sigma@n)         3.08     1.78     1.38     1.03     0.69 
+
+== 7. PAIRED vs CROSS-SECTIONAL: signal-to-noise gain ==
+  chlorophyll     cross-sectional d=1.24   paired d=1.59   gain=1.28x
+  chloro_adj      cross-sectional d=1.09   paired d=1.51   gain=1.38x
+  health_index    cross-sectional d=0.54   paired d=0.84   gain=1.57x
+
+elapsed 17.2s

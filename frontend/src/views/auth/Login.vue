@@ -99,7 +99,7 @@ async function onSubmit() {
   try {
     await userStore.login({ ...form })
     ElMessage.success('登录成功')
-    router.push(route.query.redirect || '/dashboard')
+    router.push(route.query.redirect || '/plants')
   } catch {
     /* 错误提示已在响应拦截器统一处理 */
   }

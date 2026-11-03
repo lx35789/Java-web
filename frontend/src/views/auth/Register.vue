@@ -104,7 +104,7 @@ async function onSubmit() {
   try {
     await userStore.register({ username: form.username, nickname: form.nickname, password: form.password })
     ElMessage.success('注册成功')
-    router.push('/dashboard')
+    router.push('/plants')
   } catch {
     /* 拦截器已提示 */
   }
