@@ -26,31 +26,43 @@ mysql -u root -p greenthumb < db/seed_disease.sql  # 29 个病害知识
 mysql -u root -p greenthumb < db/seed_symptom.sql  # 症状规则
 ```
 
-### 3. 配置密钥（重要）
+### 3. 配置数据库与密钥
 
-`application-dev.yml` **不进仓库**（含数据库密码和第三方 key）。首次运行前复制模板：
+数据库有**默认值**（`localhost:3306/greenthumb`，用户 `root`，空密码），
+所以你大概率只需要设置一个密码环境变量就能跑起来：
 
+```powershell
+# Windows PowerShell（当前窗口有效）
+$env:DB_PASSWORD = "你的MySQL密码"
+
+# 或永久生效
+setx DB_PASSWORD "你的MySQL密码"
+```
+
+> 三个可用环境变量：`DB_URL` / `DB_USER` / `DB_PASSWORD`，都已在 `application.yml` 里给了默认值。
+
+**第三方 key（可选）**：不配也能用，只是对应功能降级。
+
+| key | 不配的后果 |
+|---|---|
+| 百度 / Pl@ntNet | 物种识别不可用，前端引导手动选择物种 |
+| 大模型（qwen） | AI 讲解不可用，只返回知识库原文 |
+
+要配置的话，二选一：
+
+**方式 A：环境变量**（推荐，不落地任何文件）
+```powershell
+setx GREENTHUMB_LLM_API_KEY "sk-xxx"
+setx GREENTHUMB_LLM_BASE_URL "https://dashscope.aliyuncs.com/compatible-mode/v1"
+```
+
+**方式 B：配置文件**
 ```bash
 cp backend/src/main/resources/application-dev.yml.example \
    backend/src/main/resources/application-dev.yml
 ```
-
-然后按需填入：
-
-```yaml
-spring:
-  datasource:
-    username: root
-    password: 你的数据库密码
-
-greenthumb:
-  recognition:
-    baidu:              # 物种识别（可选，不填会降级到手动选择）
-      api-key: ""
-      secret-key: ""
-  llm:                  # 大模型讲解（可选，不填则只返回知识库原文）
-    api-key: ""
-```
+然后填入 `spring.datasource.password` 与 `greenthumb.llm.api-key`。
+该文件已被 `.gitignore` 排除，不会进仓库。
 
 ### 4. 启动三个服务
 
