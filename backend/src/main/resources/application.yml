@@ -54,6 +54,13 @@ greenthumb:
       secret-key: ""
     plantnet:
       api-key: ""
+    # 自研模型的「物种识别」：实验性功能，**默认关闭**。
+    # 它借用病害模型的类别→物种映射，只覆盖 6 个物种；对未覆盖的植物不会说
+    # "不认识"，而是给出高置信度的错误答案（实测一张非植物图片被判定为「月季 0.94」）。
+    # 准确性优先 → 默认关闭，认不出时如实引导用户手动选择。
+    # 只有在数据集上验证过准确率、并接受「仅覆盖这 6 种」的前提下，才改为 true。
+    self-model:
+      enabled: false
   # ===== 大模型兜底（OpenAI 兼容协议，换厂商只改 base-url + 模型名）=====
   # 阿里云百炼：https://dashscope.aliyuncs.com/compatible-mode/v1   模型 qwen-vl-max / qwen-plus
   # 智谱：      https://open.bigmodel.cn/api/paas/v4                模型 glm-4v / glm-4-flash

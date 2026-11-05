@@ -121,6 +121,13 @@ public class BaiduRecognitionProvider implements RecognitionProvider {
             if (rawName.isEmpty()) {
                 continue;
             }
+            // 百度对「不是植物」的图片会返回名为「非植物」的条目。
+            // 它不是候选物种，展示给用户只会造成困惑（而且前端还要拿它去匹配植物库）。
+            // 直接丢弃：本家没有结果时，编排器会自然降级到下一家。
+            if (rawName.contains("非植物")) {
+                log.info("百度判定图片中没有植物，丢弃该候选");
+                continue;
+            }
             double score = parseScore(item.path("score").asText("0"));
             list.add(new RecognitionCandidate(rawName, null, score));
         }

@@ -110,8 +110,8 @@ export const RECOGNITION_PROVIDER = {
   PLANTNET: { label: 'Pl@ntNet', type: 'warning' },
   SELF_MODEL: { label: '自研模型', type: 'success' },
   KINDWISE: { label: 'Plant.id', type: 'info' },
-  /** 所有通道都不可用（通常是还没配 API Key） */
-  NONE: { label: '识别服务未配置', type: 'info' }
+  /** 所有通道都没给出可信结果（不是"没配 key"，而是"没认出来"） */
+  NONE: { label: '未识别到物种', type: 'info' }
 }
 
 /** 置信度分档 —— 用于统一的颜色/文案表达 */

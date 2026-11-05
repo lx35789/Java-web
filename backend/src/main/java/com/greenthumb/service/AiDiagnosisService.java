@@ -56,18 +56,6 @@ public class AiDiagnosisService {
     private static final double CNN_TRUST = 0.60;
     private static final int TOP_K = 3;
 
-    /** 物种中文名 → 模型类别码前缀。必须与 models/labels.json 一致。 */
-    private static final Map<String, String> SPECIES_PREFIX = new LinkedHashMap<>();
-
-    static {
-        SPECIES_PREFIX.put("芦荟", "Aloe");
-        SPECIES_PREFIX.put("绿萝", "Money_Plant");
-        SPECIES_PREFIX.put("月季", "Rose");
-        SPECIES_PREFIX.put("姜黄", "Turmeric");
-        SPECIES_PREFIX.put("扶桑", "Hibiscus");
-        SPECIES_PREFIX.put("菊花", "Chrysanthemum");
-    }
-
     /** 解释类提示词：只允许在"已确定的结论"上做文章，不允许改结论 */
     private static final String EXPLAIN_SYSTEM = """
             你是「植语助手」的植物养护顾问。用户已经拿到一个确定的诊断结论，你的任务是把它讲清楚。
@@ -121,7 +109,7 @@ public class AiDiagnosisService {
 
         PlantSpeciesEntity species = resolveSpecies(userId, req, photo);
         String speciesName = species == null ? null : species.getCommonName();
-        String prefix = speciesName == null ? null : SPECIES_PREFIX.get(speciesName);
+        String prefix = com.greenthumb.common.SpeciesKeys.keyOf(speciesName);
         boolean covered = prefix != null;
 
         // ---- 识别：永远先跑 CNN，大模型不参与 ----
@@ -164,14 +152,22 @@ public class AiDiagnosisService {
 
         // ---- 链路 2：物种覆盖但置信度不足 → 给出最可能的答案 + 标注待确认 ----
         if (covered) {
+            // 查一下知识库：即使置信度不足，该病害的处置建议也应该给出来。
+            // 早一版这里写死 inKnowledgeBase=false 且 treatment 为空数组，
+            // 导致「模型认识这个病、库里也有处置方案，但用户拿到的是一片空白」。
+            DiseaseInfoEntity info = findByCode(best.code());
             String ask = candidateExplain(bytes, speciesName, topK, req.question());
             return new AiDiagnosisVO(
                     // 病名照给，但明确标"待确认"——比只丢一句"不确定"有用得多
                     "MODEL_TOP3", best.nameCn() + "（待确认）",
-                    null, conf, false,
-                    List.of(), List.of(),
-                    ask != null ? splitLines(ask) : List.of(),
-                    List.of(),
+                    info == null ? null : info.getCategory(),
+                    conf,
+                    info != null,
+                    info == null ? List.of() : splitLines(info.getSymptoms()),
+                    info == null ? List.of() : splitLines(info.getCauses()),
+                    ask != null ? splitLines(ask)
+                            : (info == null ? List.of() : splitLines(info.getTreatment())),
+                    info == null ? List.of() : splitLines(info.getPrevention()),
                     true,
                     "模型倾向于「" + best.nameCn() + "」，但把握不足。请对照下面的鉴别要点确认；"
                             + "也可以补充描述（斑点颜色、位置、是否凹陷、叶背有没有粉状物）。",

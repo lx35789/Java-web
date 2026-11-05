@@ -1,7 +1,7 @@
 <template>
   <PageHeader title="统计看板" desc="你的植物、养护执行情况和健康状态一览">
     <template #actions>
-      <el-button :icon="Refresh" :loading="loading" @click="loadAll">刷新</el-button>
+      <el-button :icon="Refresh" :loading="loading" @click="loadAll(true)">刷新</el-button>
       <el-button type="primary" :icon="Camera" @click="router.push('/recognize')">拍照识别</el-button>
     </template>
   </PageHeader>
@@ -142,6 +142,7 @@ import StatCard from '@/components/StatCard.vue'
 import ChartBox from '@/components/ChartBox.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { getStatsOverview, getWateringTrend } from '@/api/stats'
+import { clearRequestCache } from '@/api/request'
 import { getTodayTasks, completeTask } from '@/api/careTask'
 import { getCurrentWeather } from '@/api/weather'
 import { toPercent, formatRelative, formatDateTime } from '@/utils/format'
@@ -234,7 +235,9 @@ const healthOption = computed(() => {
 })
 
 /* ---------------- 数据 ---------------- */
-async function loadAll() {
+async function loadAll(force = false) {
+  // 手动刷新时绕过 30s 读缓存，否则点「刷新」看不到新数据
+  if (force) clearRequestCache()
   loading.value = true
   try {
     const [o, t, tasks, w] = await Promise.all([

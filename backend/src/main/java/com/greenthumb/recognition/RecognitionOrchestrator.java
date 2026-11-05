@@ -23,8 +23,23 @@ public class RecognitionOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(RecognitionOrchestrator.class);
 
-    /** 降级链顺序 */
-    private static final List<String> ORDER = List.of("BAIDU", "PLANTNET", "SELF_MODEL");
+    /**
+     * 降级链顺序：本地自研模型 → 百度 → Pl@ntNet。
+     * <p>
+     * 本地模型排最前：不需要 key、不走外网、响应最快；它只覆盖 6 个物种，
+     * 认不出（置信度不足）时会自动落到后两家。百度排在 Pl@ntNet 前：
+     * 中文名返回更准，配额也更宽。
+     */
+    private static final List<String> ORDER = List.of("SELF_MODEL", "BAIDU", "PLANTNET");
+
+    /**
+     * 候选置信度地板：低于该值的候选不作为识别结果返回。
+     * <p>
+     * 必要性：外部 API 对「不像植物」的图片也会硬返回几个结果，
+     * 实测 Pl@ntNet 对一张合成图给出 0.03–0.07 的候选。
+     * 这种结果喂给用户只会误导——宁可返回空、引导手动选择。
+     */
+    private static final double MIN_CONFIDENCE = 0.10;
 
     private final List<RecognitionProvider> providers;
 
@@ -62,11 +77,20 @@ public class RecognitionOrchestrator {
             try {
                 List<RecognitionCandidate> list = p.recognize(imageBytes, filename);
                 int cost = (int) (System.currentTimeMillis() - start);
-                if (!list.isEmpty()) {
-                    log.info("识别成功，provider={} 候选={} 耗时={}ms", p.name(), list.size(), cost);
-                    return new Outcome(p.name(), list, false, fallbackUsed, cost);
+                // 过滤掉明显不可信的候选；全被过滤掉就当作这家没认出，继续降级
+                List<RecognitionCandidate> kept = list.stream()
+                        .filter(c -> c.confidence() >= MIN_CONFIDENCE)
+                        .toList();
+                if (!kept.isEmpty()) {
+                    log.info("识别成功，provider={} 候选={} 耗时={}ms", p.name(), kept.size(), cost);
+                    return new Outcome(p.name(), kept, false, fallbackUsed, cost);
                 }
-                log.warn("provider={} 未返回候选，继续降级", p.name());
+                if (!list.isEmpty()) {
+                    log.warn("provider={} 的候选置信度均低于 {}，判为未识别，继续降级",
+                            p.name(), MIN_CONFIDENCE);
+                } else {
+                    log.warn("provider={} 未返回候选，继续降级", p.name());
+                }
             } catch (Exception e) {
                 log.warn("provider={} 调用失败，继续降级：{}", p.name(), e.getMessage());
             }

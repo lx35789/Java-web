@@ -183,8 +183,13 @@ const difficultyMeta = computed(() => DIFFICULTY[species.value.difficulty] || DI
 const difficultyType = computed(() => DIFFICULTY_TYPE[species.value.difficulty] || 'info')
 const lightMeta = computed(() => LIGHT_LEVELS[species.value.lightRequirement] || { label: '—', desc: '' })
 
-/** 是否有公开病害标注数据（与 docs/02 的 F10 覆盖范围一致，见 constants.js） */
-const diseaseCovered = computed(() => DISEASE_COVERED_SPECIES.includes(species.value.commonName))
+/** 是否有公开病害标注数据（与 docs/02 的 F10 覆盖范围一致，见 constants.js）
+ *  用包含匹配：百度常返回「月季花」这类带后缀的名字，精确比较会误判为"无数据" */
+const diseaseCovered = computed(() => {
+  const name = species.value?.commonName || ''
+  if (!name) return false
+  return DISEASE_COVERED_SPECIES.some((s) => name.includes(s) || s.includes(name))
+})
 
 async function load() {
   loading.value = true

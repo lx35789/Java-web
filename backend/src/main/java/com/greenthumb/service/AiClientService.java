@@ -161,7 +161,11 @@ public class AiClientService {
                         n.path("confidence").asDouble(0d)));
             }
             if (items.isEmpty()) {
-                return new Prediction(false, "模型没有返回任何候选", List.of(), latency);
+                // 保留 AI 服务给出的具体原因（例如「图像与绿萝的病害特征不符，该物种概率合计仅 1.1%」），
+                // 不要统一替换成"没有返回候选"——那样用户完全不知道发生了什么。
+                String why = root.path("reason").isMissingNode() || root.path("reason").isNull()
+                        ? "模型没有返回任何候选" : root.path("reason").asText();
+                return new Prediction(false, why, List.of(), latency);
             }
             return new Prediction(true, null, items, latency);
 

@@ -19,7 +19,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 物种识别。
@@ -67,11 +69,20 @@ public class RecognitionService {
 
         List<RecognitionVO.Item> items = new ArrayList<>();
         int rank = 1;
+        // 去重：百度经常把同一株植物返回两条（不同百科入口），
+        // 之前会让前端出现两个一模一样的「月季」候选，用户无法区分。
+        Set<String> seen = new HashSet<>();
         for (RecognitionCandidate c : outcome.candidates()) {
             if (items.size() >= MAX_RESULTS) {
                 break;
             }
             PlantSpeciesEntity sp = match(c, allSpecies);
+            String key = sp != null
+                    ? "id:" + sp.getId()
+                    : "name:" + (c.rawName() == null ? "" : c.rawName().trim());
+            if (!seen.add(key)) {
+                continue;
+            }
             items.add(new RecognitionVO.Item(
                     rank++,
                     sp == null ? null : sp.getId(),

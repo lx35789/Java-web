@@ -55,19 +55,52 @@
         </el-form>
 
         <div class="form-footer">
-          <span>还没有账号？</span>
-          <router-link to="/register" class="gt-link">立即注册</router-link>
+          <span>首次使用？直接点「登录」，会自动为你创建账号</span>
         </div>
 
-        <el-alert type="info" :closable="false" class="demo-tip">
+        <!-- 服务器设置入口：移动端 App 里后端地址可运行时修改，
+             避免内网穿透域名变化后必须重新打包 -->
+        <div class="server-entry">
+          <el-button link size="small" @click="openServerDialog">
+            <el-icon><Setting /></el-icon>
+            <span style="margin-left: 4px">服务器设置</span>
+          </el-button>
+          <span class="server-current">{{ apiBaseLabel }}</span>
+        </div>
+
+        <el-alert v-if="isMock" type="info" :closable="false" class="demo-tip">
           <template #title>
             <span class="gt-text-small">
-              骨架阶段已开启 Mock：任意用户名密码可登录。<br />
-              用户名以 <b>admin</b> 开头即可以管理员身份进入（试试 <b>admin</b> / <b>123456</b>）
+              当前为 Mock 模式：任意用户名密码可登录。<br />
+              用户名以 <b>admin</b> 开头即可以管理员身份进入
             </span>
           </template>
         </el-alert>
       </div>
+
+      <!-- 服务器地址设置 -->
+      <el-dialog v-model="serverDialog" title="服务器设置" width="min(92vw, 460px)">
+        <el-form label-position="top">
+          <el-form-item label="后端地址（需包含 /api/v1）">
+            <el-input
+              v-model="serverInput"
+              placeholder="http://192.168.1.10:8080/api/v1"
+              clearable
+            />
+          </el-form-item>
+        </el-form>
+        <div class="server-tip">
+          支持两种写法：<br />
+          · 局域网：<code>http://192.168.x.x:8080</code><br />
+          · 公网穿透：<code>https://xxxx.ngrok-free.app</code><br />
+          只填主机时会自动补全 <code>/api/v1</code>。
+        </div>
+        <template #footer>
+          <el-button size="small" @click="serverDialog = false">取消</el-button>
+          <el-button size="small" @click="onRestoreServer">恢复默认</el-button>
+          <el-button size="small" type="primary" @click="onSaveServer">保存并重载</el-button>
+        </template>
+      </el-dialog>
     </div>
   </div>
 </template>
@@ -77,13 +110,41 @@ import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+import { DEFAULT_API_BASE, getApiBase, setApiBase } from '@/utils/serverConfig'
+import { USE_MOCK } from '@/api/request'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
+const isMock = USE_MOCK
+
 const formRef = ref(null)
-const form = reactive({ username: 'demo', password: '123456' })
+const form = reactive({ username: 'demo', password: 'demo1234' })
+
+/* ---------------- 服务器地址设置 ---------------- */
+const serverDialog = ref(false)
+const serverInput = ref('')
+const apiBaseLabel = ref(getApiBase())
+
+function openServerDialog() {
+  serverInput.value = getApiBase()
+  serverDialog.value = true
+}
+
+function onSaveServer() {
+  apiBaseLabel.value = setApiBase(serverInput.value)
+  serverDialog.value = false
+  ElMessage.success('已保存，正在重载…')
+  setTimeout(() => window.location.reload(), 400)
+}
+
+function onRestoreServer() {
+  setApiBase('')
+  apiBaseLabel.value = DEFAULT_API_BASE
+  ElMessage.success('已恢复默认地址')
+  setTimeout(() => window.location.reload(), 400)
+}
 
 const rules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
@@ -97,7 +158,8 @@ async function onSubmit() {
     return
   }
   try {
-    await userStore.login({ ...form })
+    // 登录 / 注册一体化：用户名不存在时后端会自动创建账号
+    await userStore.loginOrRegister({ ...form })
     ElMessage.success('登录成功')
     router.push(route.query.redirect || '/plants')
   } catch {
@@ -221,6 +283,40 @@ async function onSubmit() {
 
 .demo-tip {
   margin-top: 24px;
+}
+
+/* ---------------- 服务器设置 ---------------- */
+.server-entry {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.server-current {
+  font-size: 11px;
+  color: var(--gt-text-secondary);
+  word-break: break-all;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.server-tip {
+  font-size: 12px;
+  line-height: 1.9;
+  color: var(--gt-text-secondary);
+  background: #fafbfc;
+  border: 1px solid var(--gt-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.server-tip code {
+  background: #eef2f0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11.5px;
 }
 
 @media (max-width: 900px) {

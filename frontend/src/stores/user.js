@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import * as authApi from '@/api/auth'
+import { clearRequestCache } from '@/api/request'
 import { getToken, setToken, removeToken, getCachedUser, setCachedUser } from '@/utils/auth'
 
 export const useUserStore = defineStore('user', () => {
@@ -13,6 +14,8 @@ export const useUserStore = defineStore('user', () => {
   const displayName = computed(() => profile.value?.nickname || profile.value?.username || '未登录')
 
   function applyAuth(data) {
+    // 换用户后必须丢掉上一个账号的缓存数据
+    clearRequestCache()
     token.value = data.token
     setToken(data.token)
     profile.value = data.user || {}
@@ -23,6 +26,21 @@ export const useUserStore = defineStore('user', () => {
     loading.value = true
     try {
       const data = await authApi.login(payload)
+      applyAuth(data)
+      return data
+    } finally {
+      loading.value = false
+    }
+  }
+
+  /**
+   * 登录注册一体化：没注册过的用户名会直接创建并登录。
+   * 移动端登录页只调这一个方法，用户不用先判断自己有没有账号。
+   */
+  async function loginOrRegister(payload) {
+    loading.value = true
+    try {
+      const data = await authApi.loginOrRegister(payload)
       applyAuth(data)
       return data
     } finally {
@@ -61,12 +79,14 @@ export const useUserStore = defineStore('user', () => {
     } catch {
       /* 登出失败不阻塞本地清理 */
     }
+    clearRequestCache()
     token.value = ''
     profile.value = {}
     removeToken()
   }
 
   function reset() {
+    clearRequestCache()
     token.value = ''
     profile.value = {}
     removeToken()
@@ -80,6 +100,7 @@ export const useUserStore = defineStore('user', () => {
     isAdmin,
     displayName,
     login,
+    loginOrRegister,
     register,
     fetchProfile,
     updateProfile,

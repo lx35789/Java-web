@@ -56,3 +56,33 @@ greenthumb:
       secret-key: ""
     plantnet:
       api-key: ""
+
+  # ============================================================
+  # Python AI 服务（病害识别）
+  # 不启动它也能跑：病害识别返回 available=false，其他功能不受影响。
+  # 启动方式见 ai-service/README。
+  # ============================================================
+  ai-service:
+    base-url: http://localhost:8000
+    # 单张图片识别超时（CPU 推理 160px 通常在 100ms 内，留足余量）
+    timeout-ms: 6000
+
+  # ============================================================
+  # 大模型讲解（可选，仅用于给结论补充通俗解释，不参与识别）
+  # 不填 api-key 时：/api/v1/diagnoses/ai 返回 UNAVAILABLE，
+  # 但 /api/v1/diagnoses/disease 完全不受影响（只走自训模型）。
+  #
+  # 任选一家（都是 OpenAI 兼容协议，换厂商只改 base-url + 模型名）：
+  #   阿里云百炼 https://dashscope.aliyuncs.com/compatible-mode/v1
+  #             视觉 qwen3-vl-plus / 文本 qwen-plus
+  #   智谱       https://open.bigmodel.cn/api/paas/v4
+  #             视觉 glm-4v / 文本 glm-4-flash
+  #   也可以用环境变量：GREENTHUMB_LLM_API_KEY / GREENTHUMB_LLM_BASE_URL
+  # ============================================================
+  llm:
+    enabled: true
+    base-url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api-key: ""
+    vision-model: "qwen3-vl-plus"
+    text-model: "qwen-plus"
+    timeout-ms: 30000

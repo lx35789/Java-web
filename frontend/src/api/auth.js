@@ -1,6 +1,8 @@
 import request from './request'
 
 export const login = (data) => request.post('/auth/login', data)
+/** 登录注册一体化：用户不存在则自动注册并登录 */
+export const loginOrRegister = (data) => request.post('/auth/login-or-register', data)
 export const register = (data) => request.post('/auth/register', data)
 export const logout = () => request.post('/auth/logout')
 export const refresh = () => request.post('/auth/refresh')

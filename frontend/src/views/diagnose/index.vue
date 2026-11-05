@@ -71,11 +71,11 @@
               />
 
               <div
-                v-for="r in recognition.results"
+                v-for="(r, i) in recognition.results"
                 :key="r.rank"
                 class="recog-item"
-                :class="{ active: species && species.id === r.speciesId }"
-                @click="pickSpecies(r)"
+                :class="{ active: selectedIdx === i }"
+                @click="pickSpecies(r, i)"
               >
                 <span class="recog-emoji">{{ r.emoji || '🌿' }}</span>
                 <div class="recog-main">
@@ -85,14 +85,14 @@
                   </div>
                   <div class="recog-sci">{{ r.scientificName }}</div>
                 </div>
-                <el-icon v-if="species && species.id === r.speciesId" class="recog-check">
+                <el-icon v-if="selectedIdx === i" class="recog-check">
                   <CircleCheckFilled />
                 </el-icon>
               </div>
 
               <div class="skip-line">
                 都不像？
-                <span class="gt-link" @click="species = null">跳过这一步</span>
+                <span class="gt-link" @click="clearSpecies">跳过这一步</span>
                 ，直接做病害和症状诊断也可以（只是判因会少一个参考维度）
               </div>
             </div>
@@ -136,7 +136,18 @@
 
             <!-- 情况 C：可以识别 -->
             <template v-else>
-              <div v-if="!disease">
+              <div v-if="!disease || !disease.predicted">
+                <!-- 模型不可用：明确说明原因，并允许重试或跳过（不能卡在这一步） -->
+                <el-alert
+                  v-if="diseaseUnavailable"
+                  :type="diseaseAlert.type"
+                  :closable="false"
+                  show-icon
+                  class="gt-mb-16"
+                  :title="diseaseAlert.title"
+                  :description="diseaseAlert.desc"
+                />
+
                 <div class="photo-strip">
                   <img v-if="previewUrl" :src="previewUrl" class="strip-img" alt="待识别照片" />
                   <div class="strip-text">
@@ -158,7 +169,7 @@
                   :loading="diseaseChecking"
                   @click="startDiseaseCheck"
                 >
-                  {{ diseaseChecking ? '识别中…' : '开始病害识别' }}
+                  {{ diseaseChecking ? '识别中…' : diseaseUnavailable ? '重试识别' : '开始病害识别' }}
                 </el-button>
               </div>
 
@@ -373,11 +384,12 @@
           <!-- 病害结论 -->
           <div class="sum-block">
             <div class="sum-label">病害识别</div>
-            <div v-if="disease" class="sum-value">
+            <div v-if="disease && disease.predicted" class="sum-value">
               <el-tag size="small" type="danger" effect="plain">{{ disease.predicted.nameCn }}</el-tag>
             </div>
             <div v-else-if="!file" class="sum-empty">无照片，已跳过</div>
             <div v-else-if="!diseaseCovered" class="sum-empty">该物种无数据，已跳过</div>
+            <div v-else-if="diseaseUnavailable" class="sum-empty">模型暂不可用，已跳过</div>
             <div v-else-if="diseaseDecision === 'care'" class="sum-empty">已排除，继续排查养护问题</div>
             <div v-else class="sum-empty">未执行</div>
           </div>
@@ -465,9 +477,13 @@ const photoId = ref(null)
 const recognizing = ref(false)
 const recognition = ref(null)
 const species = ref(null)
+/** 当前选中的候选下标（-1 表示没选/已跳过）；不能用 speciesId 判断，见 pickSpecies */
+const selectedIdx = ref(-1)
 
 const diseaseChecking = ref(false)
 const disease = ref(null)
+/** 模型不可用时的原因（后端 available=false 会带 reason）；有值时说明没法识别，但流程仍可继续 */
+const diseaseUnavailable = ref('')
 const diseaseDecision = ref('')
 
 const plants = ref([])
@@ -483,10 +499,14 @@ const providerLabel = computed(
   () => RECOGNITION_PROVIDER[recognition.value?.provider]?.label || '未知来源'
 )
 
-/** 该物种是否有病害识别数据；未识别物种时允许尝试 */
+/** 该物种是否有病害识别数据；未识别物种时允许尝试。
+ *  用「包含」而不是精确相等：百度经常返回「月季花」「绿萝（黄金葛）」这类带后缀的名字，
+ *  精确匹配会把覆盖范围内的物种误判成"无数据"，直接跳过错失整个第 2 步。 */
 const diseaseCovered = computed(() => {
   if (!species.value) return true
-  return DISEASE_COVERED_SPECIES.includes(species.value.commonName)
+  const name = species.value.commonName || ''
+  if (!name) return true
+  return DISEASE_COVERED_SPECIES.some((s) => name.includes(s) || s.includes(name))
 })
 
 const diseaseCategory = computed(
@@ -494,6 +514,34 @@ const diseaseCategory = computed(
 )
 
 const confMeta = computed(() => diagnosisConfidence(symptomResult.value?.candidates?.[0]?.confidence ?? 0))
+
+/** 第 2 步不可用/无结论时的提示样式：AI 视觉初筛的结论和"模型判断不了"要区别对待 */
+const diseaseAlert = computed(() => {
+  const t = diseaseUnavailable.value || ''
+  if (t.startsWith('AI 观察')) {
+    const healthy = t.includes('健康')
+    return {
+      type: healthy ? 'success' : 'info',
+      title: healthy ? '看起来是健康的' : 'AI 视觉观察结果',
+      desc: t.replace(/^AI\s*观察[:：]\s*/, '')
+    }
+  }
+  // 大模型给出的推测结论：这是"有结论"，不是"识别不可用"，标题必须区分开
+  if (t.startsWith('可能：')) {
+    return {
+      type: 'info',
+      title: 'AI 推测结果（建议结合症状诊断确认）',
+      desc: t
+    }
+  }
+  return {
+    type: 'warning',
+    title: '病害识别暂时不可用',
+    desc: t
+      ? `${t} 你可以点「下一步」跳过，第 3 步的症状诊断不依赖模型。`
+      : '你可以点「下一步」跳过，第 3 步的症状诊断不依赖模型。'
+  }
+})
 
 const canAnalyze = computed(() => {
   if (!symptomCodes.value.length) return false
@@ -516,7 +564,10 @@ watch(file, (f) => {
   // 换照片后，之前基于旧照片的结论全部作废
   photoId.value = null
   recognition.value = null
+  species.value = null
+  selectedIdx.value = -1
   disease.value = null
+  diseaseUnavailable.value = ''
   diseaseDecision.value = ''
 })
 
@@ -532,6 +583,11 @@ async function startRecognize() {
     const photo = await uploadPhoto(file.value, { photoType: 'LEAF' })
     photoId.value = photo.id
     recognition.value = await recognizeSpecies(photo.id)
+    // 默认选中 Top-1：用户识别完直接点「下一步」时，第 2 步也要知道这是什么植物。
+    // 不自动选的话 species 为空，病害识别就会退回通用模型、给出跨物种的错误结论。
+    // 用户点选其他候选时再覆盖即可。
+    const first = recognition.value?.results?.[0]
+    if (first) await pickSpecies(first, 0)
   } catch {
     /* 拦截器已提示 */
   } finally {
@@ -540,7 +596,11 @@ async function startRecognize() {
 }
 
 /** 选中一个识别结果，并拉取它的完整档案（用于判断是否有病害数据） */
-async function pickSpecies(r) {
+async function pickSpecies(r, idx = -1) {
+  // 用「第几个候选」记录选中状态，而不是用 speciesId：
+  // 百度可能同时返回「月季花」和「玫瑰」，两者都映射到同一个物种（id=11），
+  // 用 speciesId 判断会导致两个候选同时显示选中、且无法取消。
+  selectedIdx.value = idx
   // 第三方识别出的物种不一定在我们的植物库里（百度能认 2 万种，我们只有 10 种），
   // 这时 speciesId 为 null，直接本地兜底，不要发一个注定失败的请求。
   if (!r.speciesId) {
@@ -554,10 +614,17 @@ async function pickSpecies(r) {
   }
 }
 
+/** 跳过物种识别：清空选择，让后续步骤按"不知道物种"处理 */
+function clearSpecies() {
+  species.value = null
+  selectedIdx.value = -1
+}
+
 /* ---------------- 第 2 步 ---------------- */
 async function startDiseaseCheck() {
   if (!file.value) return
   diseaseChecking.value = true
+  diseaseUnavailable.value = ''
   try {
     let pid = photoId.value
     if (!pid) {
@@ -565,7 +632,25 @@ async function startDiseaseCheck() {
       pid = photo.id
       photoId.value = pid
     }
-    disease.value = await diagnoseDisease({ photoId: pid, userPlantId: userPlantId.value })
+    // 带上第 1 步识别出的物种名：后端据此路由到「物种专用模型」
+    //（芦荟有专用 5 类模型，不带的话会回退通用模型，准确率差一个量级）
+    const res = await diagnoseDisease({
+      photoId: pid,
+      userPlantId: userPlantId.value,
+      speciesName: species.value?.commonName || null
+    })
+
+    // 关键防护：模型不可用时后端返回 predicted=null（200 + available=false）。
+    // 若直接把它赋给 disease，模板里的 disease.predicted.xxx 会抛渲染异常，
+    // 导致整个组件更新失败 —— 表现就是「上一步/下一步按钮消失、页面卡死」。
+    // 因此这里先判空：只有真正拿到预测结果才进入结果视图。
+    if (res && res.predicted) {
+      disease.value = res
+    } else {
+      disease.value = null
+      diseaseUnavailable.value =
+        res?.reason || '病害识别模型暂未就绪，可以跳过这一步，直接用第 3 步的症状诊断。'
+    }
   } finally {
     diseaseChecking.value = false
   }
@@ -599,7 +684,9 @@ function reset() {
   photoId.value = null
   recognition.value = null
   species.value = null
+  selectedIdx.value = -1
   disease.value = null
+  diseaseUnavailable.value = ''
   diseaseDecision.value = ''
   symptomCodes.value = []
   symptomContext.value = { leafPosition: null, veinPattern: null, causeHint: null }

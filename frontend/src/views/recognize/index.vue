@@ -38,7 +38,7 @@
         </div>
 
         <div class="gt-text-secondary gt-text-small gt-mt-8">
-          骨架阶段为 Mock 数据，不会真正上传。接入后端后将调用自研模型，低置信度时自动兜底到 Pl@ntNet。
+          识别由百度植物识别提供，Pl@ntNet 作为备用通道。置信度不足时会明确告知，不会硬给物种——你也可以直接从植物库手动选择。
         </div>
       </div>
     </el-col>

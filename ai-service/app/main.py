@@ -62,3 +62,18 @@ async def predict(file: UploadFile = File(...), top_k: int = 3, species: Optiona
 
     result = classifier.predict(raw, top_k=top_k, species=species)
     return JSONResponse(result)
+
+
+@app.post("/v1/species/predict")
+async def predict_species(file: UploadFile = File(...), top_k: int = 3) -> JSONResponse:
+    """
+    物种识别。
+
+    由病害模型按「物种」聚合概率间接实现（不需要单独训练物种分类器），
+    固定走通用模型。只覆盖模型训练过的 6 个物种，调用方需按置信度决定是否采信。
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="空文件")
+
+    return JSONResponse(classifier.predict_species(raw, top_k=top_k))

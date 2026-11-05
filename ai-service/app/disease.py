@@ -55,6 +55,21 @@ SPECIALIZED_DIR = MODEL_DIR / "specialized"
 IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
+# 物种 key → 中文名。
+# 用于「物种识别」结果展示，以及后端按中文名匹配植物库（common_name 精确匹配）。
+SPECIES_CN = {
+    "Aloe": "芦荟",
+    "Money Plant": "绿萝",
+    "Rose": "月季",
+    "Turmeric": "姜黄",
+    "Hibiscus": "扶桑",
+    "Chrysanthemum": "菊花",
+}
+
+# 指定物种时，该物种所有类别的概率合计至少要达到这个值，否则视为
+# "模型没看出这是这个物种"，不给病害结论。经验值：真图通常 >0.5。
+MIN_SPECIES_MASS = 0.20
+
 
 class DiseaseClassifier:
     """单个 ONNX 模型的封装。线程安全（onnxruntime 的 InferenceSession 本身线程安全）。"""
@@ -144,7 +159,18 @@ class DiseaseClassifier:
         return np.expand_dims(arr, 0)  # → NCHW
 
     # ------------------------------------------------------------------
-    def predict(self, image_bytes: bytes, top_k: int = 3) -> Dict[str, Any]:
+    def predict(self, image_bytes: bytes, top_k: int = 3,
+                only_species: Optional[str] = None) -> Dict[str, Any]:
+        """病害分类。
+
+        only_species（如 "Money_Plant"）非空时，只保留该物种的类别。
+
+        为什么必须过滤：通用模型是在 6 个物种的 29 个类别上一起训练的，
+        一张绿萝的照片完全可能被它判成「月季·霜霉病」——物种都不对。
+        已知物种时把其他物种的类别剔除，能杜绝这种离谱结论；
+        若剔除后该物种的概率总量太小，说明模型压根没看出这个物种，
+        此时返回空结果 + 原因，让上层如实告诉用户"判断不了"，而不是硬给病名。
+        """
         if not self.available:
             return {"available": False, "reason": self.reason, "topK": [], "model": self.name}
 
@@ -154,7 +180,40 @@ class DiseaseClassifier:
         z = logits - np.max(logits)
         p = np.exp(z) / np.sum(np.exp(z))
 
-        order = np.argsort(-p)[:top_k]
+        species_mass = None
+        if only_species:
+            prefix = only_species.strip()
+            keep = [
+                i for i in range(len(p))
+                if self._label_info(i)["code"].startswith(prefix + "_")
+            ]
+            if not keep:
+                return {
+                    "available": True,
+                    "reason": f"模型类别中没有物种 {prefix} 的病害类别",
+                    "topK": [],
+                    "model": self.name,
+                    "filtered": True,
+                }
+            species_mass = float(sum(p[i] for i in keep))
+            # 该物种概率总量太小 → 模型没认出这个物种，不要硬给病名
+            if species_mass < MIN_SPECIES_MASS:
+                # 传进来的是下划线形式（Money_Plant），labels 里是空格形式（Money Plant）
+                display = SPECIES_CN.get(prefix) or SPECIES_CN.get(prefix.replace("_", " ")) or prefix
+                return {
+                    "available": True,
+                    "reason": (f"图像与「{display}」的病害特征不符（该物种概率合计仅 "
+                               f"{species_mass * 100:.1f}%），可能植株健康，或照片特征不足"),
+                    "topK": [],
+                    "model": self.name,
+                    "filtered": True,
+                    "speciesMass": round(species_mass, 4),
+                }
+            # 只在保留的类别里排序
+            order = sorted(keep, key=lambda i: -p[i])[:top_k]
+        else:
+            order = np.argsort(-p)[:top_k]
+
         items: List[Dict[str, Any]] = []
         for idx in order:
             meta = self._label_info(int(idx))
@@ -167,7 +226,62 @@ class DiseaseClassifier:
                     "confidence": round(float(p[idx]), 4),
                 }
             )
-        return {"available": True, "reason": None, "topK": items, "model": self.name}
+        return {
+            "available": True,
+            "reason": None,
+            "topK": items,
+            "model": self.name,
+            "filtered": bool(only_species),
+            "speciesMass": round(species_mass, 4) if species_mass is not None else None,
+        }
+
+    # ------------------------------------------------------------------
+    def predict_species(self, image_bytes: bytes, top_k: int = 3) -> Dict[str, Any]:
+        """物种识别（借用病害模型的类别 → 物种映射间接实现）。
+
+        原理：这个模型是在「物种 × 病害」共 29 个类别上训练的，每个类别都带
+        ``species`` 字段。把同一物种下所有类别的概率**求和**，就得到该物种的置信度。
+        同一物种有多个类别（健康 + 若干病害），求和比取单个最高类别更稳，
+        因此不需要为物种识别额外训练一个模型。
+
+        局限（上层必须处理）：
+            只覆盖训练过的 6 个物种。不在其中的植物会被强行归到最像的那个，
+            所以调用方要设置信度阈值，不到阈值就**不要给结论**，让用户手动选择。
+            返回里的 ``speciesList`` 说明模型到底覆盖哪些物种。
+        """
+        if not self.available:
+            return {"available": False, "reason": self.reason, "topK": [], "model": self.name}
+
+        x = self.preprocess(image_bytes)
+        logits = self.session.run(None, {self.input_name: x})[0][0]  # type: ignore[union-attr]
+
+        z = logits - np.max(logits)
+        p = np.exp(z) / np.sum(np.exp(z))
+
+        agg: Dict[str, float] = {}
+        for idx in range(len(p)):
+            sp = self._label_info(idx).get("species") or ""
+            if not sp:
+                continue
+            agg[sp] = agg.get(sp, 0.0) + float(p[idx])
+
+        ranked = sorted(agg.items(), key=lambda kv: -kv[1])[:top_k]
+        items = [
+            {
+                "species": sp,
+                "nameCn": SPECIES_CN.get(sp, sp),
+                "confidence": round(float(conf), 4),
+            }
+            for sp, conf in ranked
+        ]
+        return {
+            "available": True,
+            "reason": None,
+            "topK": items,
+            "model": self.name,
+            "numSpecies": len(agg),
+            "speciesList": sorted(agg),
+        }
 
     # ------------------------------------------------------------------
     def _label_info(self, idx: int) -> Dict[str, str]:
@@ -250,11 +364,23 @@ class ClassifierRegistry:
 
     def predict(self, image_bytes: bytes, top_k: int = 3, species: Optional[str] = None) -> Dict[str, Any]:
         clf = self.pick(species)
-        result = clf.predict(image_bytes, top_k=top_k)
+        # 走通用模型且已知物种时，做「物种一致性过滤」：
+        # 只保留该物种的类别，避免「绿萝的照片给出月季的病」这种跨物种结论。
+        # 专用模型的类别本来就全属于该物种，无需过滤。
+        only = species if (species and clf is self.general) else None
+        result = clf.predict(image_bytes, top_k=top_k, only_species=only)
         result["usedSpecies"] = species
         result["routedTo"] = clf.name
         result["fallback"] = bool(species) and clf is self.general
         return result
+
+    def predict_species(self, image_bytes: bytes, top_k: int = 3) -> Dict[str, Any]:
+        """物种识别固定用**通用模型**。
+
+        专用模型只覆盖单一物种的病害类别（比如 aloe 模型 5 个类别全是芦荟），
+        拿它做物种识别没有区分度，所以这里强制走通用模型。
+        """
+        return self.general.predict_species(image_bytes, top_k=top_k)
 
     def describe(self) -> Dict[str, Any]:
         """/health 用：列出所有已加载的模型。"""

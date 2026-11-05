@@ -33,6 +33,15 @@ public class AuthController {
         return ApiResponse.ok(authService.login(request));
     }
 
+    /**
+     * 登录 / 注册一体化：用户不存在则自动注册并登录，已存在则校验密码。
+     * 移动端只暴露这一个入口，减少一次选择。
+     */
+    @PostMapping("/login-or-register")
+    public ApiResponse<LoginVO> loginOrRegister(@RequestBody LoginRequest request) {
+        return ApiResponse.ok(authService.loginOrRegister(request));
+    }
+
     @PostMapping("/register")
     public ApiResponse<LoginVO> register(@RequestBody RegisterRequest request) {
         return ApiResponse.ok(authService.register(request));

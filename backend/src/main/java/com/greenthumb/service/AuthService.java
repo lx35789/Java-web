@@ -68,6 +68,62 @@ public class AuthService {
         return issue(user);
     }
 
+    /**
+     * 登录 / 注册一体化。
+     * <p>
+     * 规则（刻意如此，避免"输错密码被悄悄注册成新号"这种困惑）：
+     * - 用户名不存在 → 用本次输入的密码自动注册，并直接登录
+     * - 用户名已存在 → 必须密码正确，否则明确报"用户名或密码错误"
+     * <p>
+     * 移动端只有一个入口，用户不必先想"我注册过没有"。
+     */
+    @Transactional
+    public LoginVO loginOrRegister(LoginRequest req) {
+        String username = trim(req == null ? null : req.username());
+        String password = req == null ? null : req.password();
+        if (username.isEmpty() || password == null || password.isEmpty()) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "用户名和密码都不能为空");
+        }
+
+        UserEntity user = findByUsername(username);
+
+        // ---------- 情况 1：用户不存在 → 自动注册 ----------
+        if (user == null) {
+            if (username.length() < 3 || username.length() > 32) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "用户名长度需在 3–32 个字符之间");
+            }
+            if (password.length() < 6) {
+                throw new BizException(ErrorCode.PARAM_INVALID, "密码至少 6 位");
+            }
+            LocalDateTime now = LocalDateTime.now();
+            UserEntity created = new UserEntity();
+            created.setUsername(username);
+            created.setPasswordHash(encoder.encode(password));
+            created.setNickname(username);
+            created.setRole(roleOf(username));
+            created.setStatus(1);
+            created.setDeleted(0);
+            created.setCreatedAt(now);
+            created.setUpdatedAt(now);
+            created.setLastLoginAt(now);
+            userMapper.insert(created);
+            return issue(created);
+        }
+
+        // ---------- 情况 2：用户已存在 → 校验密码 ----------
+        if (!encoder.matches(password, user.getPasswordHash())) {
+            throw new BizException(ErrorCode.LOGIN_FAILED);
+        }
+        if (user.getStatus() != null && user.getStatus() != 1) {
+            throw new BizException(ErrorCode.ACCOUNT_DISABLED);
+        }
+        UserEntity patch = new UserEntity();
+        patch.setId(user.getId());
+        patch.setLastLoginAt(LocalDateTime.now());
+        userMapper.updateById(patch);
+        return issue(user);
+    }
+
     @Transactional
     public LoginVO register(RegisterRequest req) {
         String username = trim(req == null ? null : req.username());

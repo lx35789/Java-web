@@ -7,19 +7,23 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.greenthumb.common.BizException;
 import com.greenthumb.common.ErrorCode;
 import com.greenthumb.common.PageResult;
+import com.greenthumb.common.SpeciesKeys;
 import com.greenthumb.dto.DiagnosisRequest;
 import com.greenthumb.dto.SymptomDiagnosisRequest;
 import com.greenthumb.entity.CauseInfoEntity;
 import com.greenthumb.entity.DiseaseInfoEntity;
 import com.greenthumb.entity.DiseaseRecordEntity;
 import com.greenthumb.entity.PlantPhotoEntity;
+import com.greenthumb.entity.PlantSpeciesEntity;
 import com.greenthumb.entity.SymptomRuleEntity;
 import com.greenthumb.entity.UserPlantEntity;
 import com.greenthumb.mapper.CauseInfoMapper;
 import com.greenthumb.mapper.DiseaseInfoMapper;
 import com.greenthumb.mapper.DiseaseRecordMapper;
+import com.greenthumb.mapper.PlantSpeciesMapper;
 import com.greenthumb.mapper.SymptomRuleMapper;
 import com.greenthumb.mapper.UserPlantMapper;
+import com.greenthumb.service.llm.LlmClient;
 import com.greenthumb.vo.DiagnosisSummaryVO;
 import com.greenthumb.vo.DiseaseDiagnosisVO;
 import com.greenthumb.vo.SymptomDiagnosisVO;
@@ -60,6 +64,13 @@ public class DiagnosisService {
     private static final Set<String> VALID_STATUS = Set.of("OPEN", "TREATING", "RESOLVED");
     private static final String DISCLAIMER = "以上为园艺级处理建议，不构成农药使用指导。";
     private static final double LOW_CONFIDENCE = 0.5d;
+    /**
+     * 自训模型的最低信任门槛：低于此值不当作结论，转兜底链路复核。
+     * <p>
+     * 为什么不再往下调：实测芦荟炭疽病照片，专用模型给「健康 36.4%」，
+     * 30% 级别的输出基本等同于瞎猜；把它展示成结论比说"判断不了"更糟。
+     */
+    private static final double MIN_TRUST = 0.5d;
     private static final int TOP_K = 3;
 
     private final PhotoService photoService;
@@ -69,6 +80,9 @@ public class DiagnosisService {
     private final SymptomRuleMapper symptomRuleMapper;
     private final CauseInfoMapper causeInfoMapper;
     private final UserPlantMapper userPlantMapper;
+    private final PlantSpeciesMapper plantSpeciesMapper;
+    private final PlantNetDiseaseClient plantNetDisease;
+    private final LlmClient llm;
     private final ObjectMapper json;
 
     public DiagnosisService(PhotoService photoService,
@@ -78,6 +92,9 @@ public class DiagnosisService {
                             SymptomRuleMapper symptomRuleMapper,
                             CauseInfoMapper causeInfoMapper,
                             UserPlantMapper userPlantMapper,
+                            PlantSpeciesMapper plantSpeciesMapper,
+                            PlantNetDiseaseClient plantNetDisease,
+                            LlmClient llm,
                             ObjectMapper json) {
         this.photoService = photoService;
         this.aiClient = aiClient;
@@ -86,6 +103,9 @@ public class DiagnosisService {
         this.symptomRuleMapper = symptomRuleMapper;
         this.causeInfoMapper = causeInfoMapper;
         this.userPlantMapper = userPlantMapper;
+        this.plantSpeciesMapper = plantSpeciesMapper;
+        this.plantNetDisease = plantNetDisease;
+        this.llm = llm;
         this.json = json;
     }
 
@@ -99,19 +119,43 @@ public class DiagnosisService {
         PlantPhotoEntity photo = photoService.getOwned(userId, request.photoId());
         Long userPlantId = resolvePlantId(userId, request.userPlantId(), photo);
 
+        // 按物种路由：芦荟有专用 5 类模型，不传 key 会回退通用模型
+        //（同一张芦荟图，专用模型 Top1 75%+，通用模型约 8%）
+        // 优先用植株档案的物种；第 2 步时用户往往还没选植株，则用第 1 步识别出的物种名
+        String speciesKey = resolveSpeciesKey(userPlantId);
+        if (speciesKey == null) {
+            speciesKey = SpeciesKeys.keyOf(request.speciesName());
+        }
+
         byte[] bytes = photoService.readBytes(photo);
         AiClientService.Prediction pred =
-                aiClient.predictDisease(bytes, photoService.filenameOf(photo), TOP_K);
+                aiClient.predictDisease(bytes, photoService.filenameOf(photo), TOP_K, speciesKey);
 
-        // —— 模型不可用：不落库、不报错，把原因如实告诉用户 ——
+        // —— 模型不可用 / 该物种下没有可信结论：不落库，走兜底链路 ——
         if (!pred.available()) {
             log.info("病害识别降级：{}", pred.reason());
-            return new DiseaseDiagnosisVO(
-                    null, "DISEASE", "NONE", null, List.of(),
-                    null, null, null,
-                    "暂时无法识别这张照片（" + (pred.reason() == null ? "模型未就绪" : pred.reason())
-                            + "）。可以先到「AI 问答」里描述一下症状。",
-                    false, pred.reason(), pred.latencyMs(), null);
+            return noConclusionFallback(bytes, photo, speciesKey, pred.reason(), pred.latencyMs(), pred.topK());
+        }
+
+        // —— 模型可用，但在该物种下没有明确结论 ——
+        // 典型场景：AI 服务做了物种一致性过滤，把「绿萝照片被判成月季霜霉病」的结论剔掉了，
+        // 同时该物种的概率总量又不足以支撑任何结论。此时必须如实说"判断不了"，
+        // 绝不能退回去用其他物种的病名，否则用户看到的会是「绿萝得了月季霜霉病」。
+        if (pred.topK() == null || pred.topK().isEmpty()) {
+            log.info("病害识别无结论（物种={}）：{}", speciesKey, pred.reason());
+            return noConclusionFallback(bytes, photo, speciesKey, pred.reason(), pred.latencyMs(), pred.topK());
+        }
+        // —— 有候选，但置信度过低 ——
+        // 实测：一张芦荟炭疽病的照片，专用模型给出「芦荟·健康 36.4% / 锈病 33.0%」，
+        // 真值炭疽病根本没进前二。这种结果展示成"结论"会直接误导用户，
+        // 所以低于信任门槛时和"没结论"同等处理，交给兜底链路复核。
+        double topConfidence = pred.topK().get(0).confidence();
+        if (topConfidence < MIN_TRUST) {
+            log.info("自训模型置信度不足（{} < {}），转兜底复核：{}",
+                    String.format("%.2f", topConfidence), MIN_TRUST, pred.topK().get(0).code());
+            return noConclusionFallback(bytes, photo, speciesKey,
+                    String.format("自训模型置信度仅 %.0f%%", topConfidence * 100),
+                    pred.latencyMs(), pred.topK());
         }
 
         // —— 查知识库：一个 code 查不到很正常（模型比知识库更新得快），不能当成错误 ——
@@ -196,7 +240,10 @@ public class DiagnosisService {
 
         // 权重累加：同一病因被多条命中的规则累加，这是规则库设计的核心
         Map<String, Double> score = new LinkedHashMap<>();
-        Map<String, String> explain = new HashMap<>();
+        // 同一病因可能被多条规则命中 —— 依据与规则编号都要**全部保留**，
+        // 前端会把它们逐条列出来，用户才能看懂「为什么是这个结论」
+        Map<String, List<String>> evidenceMap = new HashMap<>();
+        Map<String, List<Long>> ruleIdsMap = new HashMap<>();
         for (SymptomRuleEntity rule : rules) {
             if (!conditionMatches(rule.getConditionJson(), ctx)) {
                 continue;
@@ -204,8 +251,11 @@ public class DiagnosisService {
             double w = rule.getWeight() == null ? 0d : rule.getWeight().doubleValue();
             score.merge(rule.getCauseCode(), w, Double::sum);
             if (rule.getExplainTpl() != null && !rule.getExplainTpl().isBlank()) {
-                explain.putIfAbsent(rule.getCauseCode(), fill(rule.getExplainTpl(), ctx));
+                evidenceMap.computeIfAbsent(rule.getCauseCode(), k -> new ArrayList<>())
+                        .add(fill(rule.getExplainTpl(), ctx));
             }
+            ruleIdsMap.computeIfAbsent(rule.getCauseCode(), k -> new ArrayList<>())
+                    .add(rule.getId());
         }
 
         // —— 规则库没配 / 一条都没命中：明确说"信息不足"，而不是硬猜 ——
@@ -213,7 +263,8 @@ public class DiagnosisService {
             log.info("症状判因无命中：symptoms={} context={}", codes, ctx);
             return new SymptomDiagnosisVO(
                     null, "SYMPTOM", "LOW", List.of(), true, followUpQuestions(ctx),
-                    "目前的信息还不足以判断原因。补充上面的信息会更准确，你也可以直接去 AI 问答里描述情况。");
+                    "目前的信息还不足以判断原因。补充上面的信息会更准确，你也可以直接去 AI 问答里描述情况。",
+                    null);
         }
 
         double total = score.values().stream().mapToDouble(Double::doubleValue).sum();
@@ -250,9 +301,9 @@ public class DiagnosisService {
                     cause == null ? null : cause.getCategory(),
                     conf,
                     cause == null ? "MEDIUM" : cause.getUrgency(),
-                    explain.getOrDefault(e.getKey(),
-                            cause == null ? null : cause.getDescription()),
-                    cause == null ? null : cause.getActionPlan()));
+                    evidenceMap.getOrDefault(e.getKey(), List.of()),
+                    splitActionPlan(cause == null ? null : cause.getActionPlan()),
+                    ruleIdsMap.getOrDefault(e.getKey(), List.of())));
         }
 
         String level = topRaw >= 0.7 ? "HIGH" : (topRaw >= 0.4 ? "MEDIUM" : "LOW");
@@ -263,12 +314,12 @@ public class DiagnosisService {
         rec.setUserPlantId(userPlantId);
         rec.setPhotoId(request.photoId());
         rec.setProvider("RULE");
-        rec.setPredictedCode(candidates.get(0).code());
+        rec.setPredictedCode(candidates.get(0).causeCode());
         rec.setConfidence(BigDecimal.valueOf(top1));
         rec.setTopK(toJson(candidates));
         rec.setDiagnosisType("SYMPTOM");
         rec.setSymptomTags(toJson(codes));
-        rec.setSuggestion(candidates.get(0).actionPlan());
+        rec.setSuggestion(String.join("\n", candidates.get(0).actionPlan()));
         rec.setStatus("OPEN");
         rec.setCreatedAt(LocalDateTime.now());
         rec.setDeleted(0);
@@ -277,7 +328,8 @@ public class DiagnosisService {
         return new SymptomDiagnosisVO(
                 rec.getId(), "SYMPTOM", level, candidates, needMore,
                 needMore ? followUpQuestions(ctx) : List.of(),
-                needMore ? "信息还不够充分，补充上面的信息会更准确。" : null);
+                needMore ? "信息还不够充分，补充上面的信息会更准确。" : null,
+                needMore ? null : buildSuggestion(candidates.get(0)));
     }
 
     /* ==================== 3. 查询 / 状态 ==================== */
@@ -386,6 +438,357 @@ public class DiagnosisService {
         return rec;
     }
 
+    /**
+     * CNN 给不出结论时，让视觉大模型看一眼图，给一个「健康 / 有明显异常」的观察。
+     * <p>
+     * 为什么需要：自训模型只训练了 6 个物种的病害，对「健康绿萝」这类图会给出跨物种的
+     * 错误结论（实测：绿萝照片被判成月季霜霉病 41%）。物种一致性过滤能挡住错误结论，
+     * 但用户只看到"判断不了"同样没有价值。视觉大模型虽然不做精确病名，但判断
+     * "有没有可见病斑"是可靠的，正好补上这一段。
+     * <p>
+     * 返回 null 表示大模型未配置或调用失败，调用方保持"判断不了"的诚实结论。
+     */
+    private String aiVisualObservation(byte[] imageBytes) {
+        if (llm == null || !llm.isConfigured() || imageBytes == null || imageBytes.length == 0) {
+            return null;
+        }
+        String system = """
+                你是植物病害初筛助手。只根据图片中**确实可见**的信息作答，禁止编造。
+                严格只输出 JSON，不要 markdown 代码块：
+                {"healthy": true/false, "observation": "你实际看到的症状，30 字内", "suggestion": "一句处置建议，30 字内"}
+                规则：
+                1. 没有可见的病斑、霉层、虫害、腐烂、明显萎蔫 → healthy=true。
+                2. 有可见异常时 healthy=false，observation 写清颜色/位置/形态。
+                3. 不要给具体病名（本地模型未收录时病名极易出错）。
+                """;
+        String user = "判断这张植物照片是否有可见的病害、虫害或腐烂迹象。只输出 JSON。";
+        try {
+            LlmClient.Result r = llm.chatVision(imageBytes, "image/jpeg", system, user);
+            if (!r.ok()) {
+                log.warn("视觉大模型初筛失败：{}", r.error());
+                return null;
+            }
+            String txt = r.content() == null ? "" : r.content().trim();
+            int s = txt.indexOf('{');
+            int e = txt.lastIndexOf('}');
+            if (s < 0 || e <= s) {
+                return null;
+            }
+            JsonNode n = json.readTree(txt.substring(s, e + 1));
+            boolean healthy = n.path("healthy").asBoolean(false);
+            String obs = n.path("observation").asText("").trim();
+            String sug = n.path("suggestion").asText("").trim();
+            StringBuilder sb = new StringBuilder();
+            sb.append(healthy ? "AI 观察：图片中未见明显病斑，植株看起来健康。" : "AI 观察：");
+            if (!obs.isEmpty()) {
+                sb.append(obs);
+            }
+            if (!sug.isEmpty()) {
+                sb.append(" 建议：").append(sug);
+            }
+            return sb.toString();
+        } catch (Exception ex) {
+            log.warn("视觉大模型初筛异常：{}", ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 自训模型给不出结论时的兜底链路：
+     * <ol>
+     *   <li>视觉大模型先判断「看起来健康 / 有明显异常」（2–4 秒）</li>
+     *   <li>有异常 → Pl@ntNet 病害识别拿候选（约 12 秒，覆盖物种有限）</li>
+     *   <li>把候选交给大模型翻成中文、判断是否成立并给建议</li>
+     *   <li>都不成立 → 退回视觉观察，如实说明</li>
+     * </ol>
+     * 任何一步失败都不抛异常，保证这一步始终能给出一个可读的答复。
+     */
+    private DiseaseDiagnosisVO noConclusionFallback(byte[] bytes, PlantPhotoEntity photo,
+                                                    String speciesKey, String reason, Integer latency,
+                                                    List<AiClientService.Item> cnnTop) {
+        // ① 已知物种 → 闭集判断：只在该物种的病害清单里选，杜绝跨物种/编造病名
+        //    实测有效：芦荟炭疽病照片，CNN 给「健康 36%」，闭集判断能选中「芦荟·炭疽病」
+        if (speciesKey != null) {
+            List<DiseaseInfoEntity> cands = diseaseInfoMapper.selectList(null).stream()
+                    .filter(d -> d.getCode() != null && d.getCode().startsWith(speciesKey + "_"))
+                    .toList();
+            String text = aiClosedSetDisease(bytes, cands, cnnTop);
+            if (text != null) {
+                return verdict("VLM", text, latency);
+            }
+        }
+
+        // ② 是否健康
+        String health = aiVisualObservation(bytes);
+        if (health != null && health.contains("健康")) {
+            return verdict("VLM", health, latency);
+        }
+
+        // ③ 有异常 → 第三方病害识别（EPPO 候选 + 置信度）
+        List<PlantNetDiseaseClient.Hit> hits = plantNetDisease.identify(bytes, photoService.filenameOf(photo));
+        List<PlantNetDiseaseClient.Hit> strong = hits.stream()
+                .filter(h -> h.score() >= 0.35)
+                .toList();
+        if (!strong.isEmpty()) {
+            String text = aiInterpretDisease(bytes, strong, health);
+            if (text != null) {
+                return verdict("PLANTNET", text, latency);
+            }
+        }
+
+        // ④ 都不成立 → 如实说明
+        String shown = health != null ? health
+                : "暂时无法识别这张照片（" + (reason == null ? "模型未就绪" : reason)
+                  + "）。可以先到「AI 问答」里描述一下症状。";
+        return verdict(health != null ? "VLM" : "NONE", shown, latency);
+    }
+
+    /**
+     * 闭集病害判断：把该物种的病害名作为唯一候选，让视觉大模型选一个。
+     * <p>
+     * 为什么这样比"开放式给病名"可靠：
+     * <ul>
+     *   <li>候选来自本地知识库（29 条），模型无法编造不存在的病名</li>
+     *   <li>范围限定在已识别物种内，不会出现「绿萝得月季霜霉病」</li>
+     *   <li>选中后处置建议直接用知识库原文，不依赖模型自由发挥</li>
+     * </ul>
+     *
+     * @return 中文结论；模型拿不准（pick=0）或未配置时返回 null，由调用方继续降级
+     */
+    private String aiClosedSetDisease(byte[] image, List<DiseaseInfoEntity> cands,
+                                      List<AiClientService.Item> cnnTop) {
+        if (cands.isEmpty() || llm == null || !llm.isConfigured()) {
+            return null;
+        }
+        StringBuilder list = new StringBuilder();
+        for (int i = 0; i < cands.size(); i++) {
+            DiseaseInfoEntity d = cands.get(i);
+            list.append(i + 1).append(". ").append(d.getNameCn());
+            // 附上知识库里的典型症状：模型据此逐条比对（凹陷/轮纹/黄晕/孢子堆），
+            // 实测把芦荟炭疽病的判断从"叶斑病"纠正为正确的"炭疽病"
+            if (d.getSymptoms() != null && !d.getSymptoms().isBlank()) {
+                list.append(" —— 典型症状：").append(abbrev(d.getSymptoms(), 90));
+            }
+            list.append('\n');
+        }
+        String system = """
+                你是植物病害诊断助手。只能从给定的候选病名中选择，不能创造新病名。
+                严格只输出 JSON，不要 markdown：
+                {"pick": 编号（都无法确认时填 0）, "confidence": "高/中/低",
+                 "evidence": ["图片中可见的依据1", "依据2"]}
+                规则：
+                1. 依据必须对应候选症状描述里的具体特征（有无凹陷、有无轮纹、有无黑点、有无黄晕、有无粉状孢子堆等）。
+                2. 拿不准就填 0，不要硬选。
+                """;
+        // 把自训模型的倾向作为参考一并给出：它虽然置信度不足，但排序往往有信息量，
+        // 大模型结合症状描述 + 这个先验做判断，比完全从零猜更稳。
+        StringBuilder prior = new StringBuilder();
+        if (cnnTop != null) {
+            for (AiClientService.Item it : cnnTop) {
+                String name = cands.stream()
+                        .filter(d -> it.code() != null && it.code().equals(d.getCode()))
+                        .map(DiseaseInfoEntity::getNameCn)
+                        .findFirst()
+                        .orElse(it.nameCn());
+                prior.append(name).append(' ').append(Math.round(it.confidence() * 100)).append("%、");
+            }
+        }
+        String user = "候选病名及典型症状：\n" + list
+                + (prior.length() > 0 ? "\n自训模型倾向（仅供参考，可能判错）：" + prior + "\n" : "")
+                + "\n请判断这张照片最符合哪一个。只输出 JSON。";
+        try {
+            LlmClient.Result r = llm.chatVision(image, "image/jpeg", system, user);
+            if (!r.ok()) {
+                log.warn("闭集病害判断失败：{}", r.error());
+                return null;
+            }
+            String txt = r.content() == null ? "" : r.content().trim();
+            int s = txt.indexOf('{');
+            int e = txt.lastIndexOf('}');
+            if (s < 0 || e <= s) {
+                return null;
+            }
+            JsonNode n = json.readTree(txt.substring(s, e + 1));
+            int pick = n.path("pick").asInt(0);
+            if (pick < 1 || pick > cands.size()) {
+                return null;
+            }
+            DiseaseInfoEntity d = cands.get(pick - 1);
+            String conf = n.path("confidence").asText("").trim();
+            List<String> ev = textList(n.path("evidence"));
+
+            StringBuilder sb = new StringBuilder("可能：").append(d.getNameCn());
+            // 若自训模型的前两名分差很小（本例锈病 31.5% vs 霜霉病 30.3%），
+            // 说明图像上确实难以区分，硬给一个结论会误导。补一句「另一个可能 + 怎么鉴别」，
+            // 让用户翻看叶背等特征自行确认——这比假装确定更有用。
+            String[] tie = nearTieNote(cands, cnnTop, d);
+            if (tie != null) {
+                sb.append(" 或 ").append(tie[0]);
+            }
+            if (!conf.isEmpty()) {
+                sb.append("（").append(conf).append("）");
+            }
+            if (tie != null && tie[1] != null && !tie[1].isEmpty()) {
+                sb.append("。鉴别：").append(tie[1].replaceAll("[。；;\\s]+$", ""));
+            }
+            if (!ev.isEmpty()) {
+                sb.append("。依据：").append(String.join("；", ev));
+            }
+            // 处置建议优先用知识库原文（人工整理、可靠），知识库没有才用模型的
+            if (d.getTreatment() != null && !d.getTreatment().isBlank()) {
+                sb.append("。建议：").append(String.join("；", splitTreatment(d.getTreatment())));
+            }
+            return sb.toString();
+        } catch (Exception ex) {
+            log.warn("闭集病害判断异常：{}", ex.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 自训模型前两名分差很小时，返回「另一个可能 + 鉴别依据」的提示文本，否则返回 null。
+     * <p>
+     * 依据：实测月季霜霉病照片，CNN 给 锈病 31.5% / 霜霉病 30.3%，两者在图像上极难区分，
+     * 硬给单一结论会误导。此时把接近的候选一并列出，并给出知识库里的鉴别特征
+     * （锈病看叶背橙黄色粉末，霜霉病看灰紫色霉层），让用户自己确认。
+     */
+    private String[] nearTieNote(List<DiseaseInfoEntity> cands,
+                                 List<AiClientService.Item> cnnTop,
+                                 DiseaseInfoEntity picked) {
+        if (cnnTop == null || cnnTop.size() < 2) {
+            return null;
+        }
+        Map<String, Double> prob = new java.util.HashMap<>();
+        for (AiClientService.Item it : cnnTop) {
+            if (it.code() != null) {
+                prob.put(it.code(), it.confidence());
+            }
+        }
+        Double pickedProb = prob.get(picked.getCode());
+        if (pickedProb == null) {
+            return null;
+        }
+        for (DiseaseInfoEntity d : cands) {
+            if (d.getCode().equals(picked.getCode())) {
+                continue;
+            }
+            Double other = prob.get(d.getCode());
+            if (other == null || Math.abs(other - pickedProb) > 0.08) {
+                continue;
+            }
+            String sym = d.getSymptoms() == null ? "" : abbrev(d.getSymptoms(), 40);
+            return new String[]{d.getNameCn(), sym};
+        }
+        return null;
+    }
+
+    /** 取前 n 个字符，超出加省略号（喂给大模型的症状描述不需要全文） */
+    private static String abbrev(String text, int n) {
+        if (text == null) {
+            return "";
+        }
+        String t = text.replaceAll("\\s+", " ").trim();
+        return t.length() <= n ? t : t.substring(0, n) + "…";
+    }
+
+    /** 把知识库里的多行/编号列表处置建议拆成短句 */
+    private static List<String> splitTreatment(String text) {
+        List<String> out = new ArrayList<>();
+        for (String line : text.split("\\r?\\n")) {
+            String t = line.replaceAll("^\\s*\\d+[.、)]\\s*", "").trim();
+            if (!t.isEmpty()) {
+                out.add(t);
+            }
+            if (out.size() >= 3) {
+                break;
+            }
+        }
+        return out;
+    }
+
+    /** 组装一个"无结构化预测、只有文字结论"的结果 */
+    private DiseaseDiagnosisVO verdict(String provider, String text, Integer latency) {
+        return new DiseaseDiagnosisVO(null, "DISEASE", provider, null, List.of(),
+                null, null, null, text, false, text, latency, null);
+    }
+
+    /**
+     * 让大模型结合图片判断 Pl@ntNet 的候选是否成立，并输出中文结论。
+     * 返回 null 表示：大模型不可用，或它认为候选都不成立（此时调用方退回视觉观察）。
+     */
+    private String aiInterpretDisease(byte[] image, List<PlantNetDiseaseClient.Hit> hits, String observation) {
+        if (llm == null || !llm.isConfigured()) {
+            return null;
+        }
+        StringBuilder cand = new StringBuilder();
+        for (int i = 0; i < hits.size(); i++) {
+            PlantNetDiseaseClient.Hit h = hits.get(i);
+            cand.append(i + 1).append(". ").append(h.label())
+                    .append("（置信度 ").append(Math.round(h.score() * 100)).append("%）\n");
+        }
+        String system = """
+                你是植物病害初筛助手。下面给出第三方病害识别服务（Pl@ntNet）的候选，以及初步观察。
+                请用**中文**判断哪个候选最可能成立。
+                严格只输出 JSON，不要 markdown：
+                {"verdict": "中文常见名；候选都不成立时写 无法确认", "confidence": "高/中/低",
+                 "evidence": ["图片中看到的依据1", "依据2"], "advice": ["处置建议1", "建议2"]}
+                规则：
+                1. 候选与图片明显不符时写「无法确认」，不要硬套。
+                2. 依据必须是图片里能看到的东西（颜色、位置、形态）。
+                3. 涉及用药只说"按产品标签稀释使用"，禁止编造浓度。
+                """;
+        String user = "Pl@ntNet 候选：\n" + cand
+                + (observation == null ? "" : "\n初步观察：" + observation);
+        try {
+            LlmClient.Result r = llm.chatVision(image, "image/jpeg", system, user);
+            if (!r.ok()) {
+                log.warn("大模型解读病害候选失败：{}", r.error());
+                return null;
+            }
+            String txt = r.content() == null ? "" : r.content().trim();
+            int s = txt.indexOf('{');
+            int e = txt.lastIndexOf('}');
+            if (s < 0 || e <= s) {
+                return null;
+            }
+            JsonNode n = json.readTree(txt.substring(s, e + 1));
+            String name = n.path("verdict").asText("").trim();
+            if (name.isEmpty() || name.contains("无法确认")) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder("可能：").append(name);
+            String conf = n.path("confidence").asText("").trim();
+            if (!conf.isEmpty()) {
+                sb.append("（").append(conf).append("）");
+            }
+            List<String> ev = textList(n.path("evidence"));
+            if (!ev.isEmpty()) {
+                sb.append("。依据：").append(String.join("；", ev));
+            }
+            List<String> ad = textList(n.path("advice"));
+            if (!ad.isEmpty()) {
+                sb.append("。建议：").append(String.join("；", ad));
+            }
+            return sb.toString();
+        } catch (Exception ex) {
+            log.warn("大模型解读病害候选异常：{}", ex.getMessage());
+            return null;
+        }
+    }
+
+    private static List<String> textList(JsonNode arr) {
+        List<String> out = new ArrayList<>();
+        if (arr != null && arr.isArray()) {
+            for (JsonNode x : arr) {
+                String t = x.asText("");
+                if (!t.isBlank()) {
+                    out.add(t.trim());
+                }
+            }
+        }
+        return out;
+    }
+
     /** 传了 userPlantId 就用它（并校验归属），否则回落到照片上挂的植物 */
     private Long resolvePlantId(Long userId, Long requested, PlantPhotoEntity photo) {
         if (requested != null) {
@@ -396,6 +799,24 @@ public class DiagnosisService {
             return requested;
         }
         return photo.getUserPlantId();
+    }
+
+    /**
+     * 该植株对应的模型物种 key；查不到返回 null，调用方回退通用模型。
+     * <p>
+     * 这一步决定是否使用「物种专用模型」：AI 服务收到 species=Aloe 会路由到
+     * ai-service/models/specialized/aloe/，否则一律走通用 29 类模型。
+     */
+    private String resolveSpeciesKey(Long userPlantId) {
+        if (userPlantId == null) {
+            return null;
+        }
+        UserPlantEntity plant = userPlantMapper.selectById(userPlantId);
+        if (plant == null || plant.getSpeciesId() == null) {
+            return null;
+        }
+        PlantSpeciesEntity species = plantSpeciesMapper.selectById(plant.getSpeciesId());
+        return species == null ? null : SpeciesKeys.keyOf(species.getCommonName());
     }
 
     private Map<String, DiseaseInfoEntity> loadInfoByCodes(List<String> codes) {
@@ -610,6 +1031,43 @@ public class DiagnosisService {
             qs.add("最近有没有换盆、换位置或者施肥？");
         }
         return qs;
+    }
+
+    /**
+     * 把 action_plan 的多行文本拆成前端可渲染的步骤数组。
+     * <p>
+     * 种子数据形如 "1. 立即停止浇水\n2. 检查排水孔…"；
+     * 前端 DiagnosisEvidence.vue 用 &lt;ol&gt; 渲染 actionPlan 数组，
+     * 若直接给字符串，v-for 会逐字符迭代，页面会变成一堆单字。
+     */
+    private static List<String> splitActionPlan(String text) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        List<String> steps = new ArrayList<>();
+        for (String raw : text.split("\\r?\\n")) {
+            String line = raw.trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            // 去掉行首编号：1. / 1、 / 1) / - / •
+            line = line.replaceFirst("^\\s*(?:\\d+[.、)）]|[-•*])\\s*", "").trim();
+            if (!line.isEmpty()) {
+                steps.add(line);
+            }
+        }
+        return steps.isEmpty() ? List.of(text.trim()) : steps;
+    }
+
+    /** 综合建议：一句话说清结论并给出下一步动作（前端「综合建议」区块） */
+    private static String buildSuggestion(SymptomDiagnosisVO.Candidate top) {
+        StringBuilder sb = new StringBuilder("综合来看，最可能是「").append(top.nameCn()).append("」");
+        if (top.confidence() != null) {
+            sb.append("（置信度 ").append(Math.round(top.confidence() * 100)).append("%）");
+        }
+        sb.append("。建议按上面的步骤处理；若 3–5 天没有改善，可以复拍一张照片复诊，"
+                + "或到「AI 问答」补充更多细节。");
+        return sb.toString();
     }
 
     private String toJson(Object o) {

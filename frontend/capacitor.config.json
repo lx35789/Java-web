@@ -1,0 +1,11 @@
+{
+  "appId": "com.greenthumb.app",
+  "appName": "植语助手",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http"
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

@@ -2,12 +2,17 @@
   <div class="image-uploader">
     <div class="upload-area" :class="{ 'has-image': !!previewUrl }" @click="pick">
       <img v-if="previewUrl" :src="previewUrl" class="preview" alt="预览" />
+      <div v-else-if="processing" class="placeholder">
+        <el-icon :size="30" class="is-loading"><Loading /></el-icon>
+        <div class="ph-title">正在压缩图片…</div>
+        <div class="ph-desc">大图会压到长边 1600px，上传更快</div>
+      </div>
       <div v-else class="placeholder">
         <el-icon :size="30"><Plus /></el-icon>
         <div class="ph-title">点击上传照片</div>
         <div class="ph-desc">{{ hint }}</div>
       </div>
-      <div v-if="previewUrl" class="mask">重新选择</div>
+      <div v-if="previewUrl" class="mask">{{ processing ? '正在压缩…' : '重新选择' }}</div>
     </div>
 
     <input
@@ -29,6 +34,8 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { Plus, Loading } from '@element-plus/icons-vue'
+import { compressImage, formatBytes } from '@/utils/image'
 
 const props = defineProps({
   /** 选中的 File 对象 */
@@ -42,6 +49,8 @@ const emit = defineEmits(['update:modelValue', 'change'])
 
 const inputRef = ref(null)
 const previewUrl = ref('')
+const processing = ref(false)
+const originalSize = ref(0)
 let objectUrl = ''
 
 const file = computed(() => props.modelValue)
@@ -49,7 +58,12 @@ const file = computed(() => props.modelValue)
 const sizeText = computed(() => {
   const s = props.modelValue?.size
   if (!s) return ''
-  return s < 1024 * 1024 ? `${(s / 1024).toFixed(0)} KB` : `${(s / 1024 / 1024).toFixed(1)} MB`
+  const now = formatBytes(s)
+  // 压缩后体积明显变小时，把原大小也标出来，避免用户误以为画质被严重破坏
+  if (originalSize.value > s * 1.15) {
+    return `${now}（原 ${formatBytes(originalSize.value)}）`
+  }
+  return now
 })
 
 function revoke() {
@@ -79,16 +93,25 @@ function pick() {
   inputRef.value?.click()
 }
 
-function onChange(e) {
+async function onChange(e) {
   const f = e.target.files?.[0]
-  if (!f) return
-  emit('update:modelValue', f)
-  emit('change', f)
   // 允许重复选同一个文件
   e.target.value = ''
+  if (!f) return
+
+  processing.value = true
+  try {
+    const compressed = await compressImage(f)
+    originalSize.value = f.size
+    emit('update:modelValue', compressed)
+    emit('change', compressed)
+  } finally {
+    processing.value = false
+  }
 }
 
 function clear() {
+  originalSize.value = 0
   emit('update:modelValue', null)
   emit('change', null)
 }

@@ -41,6 +41,7 @@ public class WebConfig implements WebMvcConfigurer {
                 .excludePathPatterns(
                         "/api/v1/ping",
                         "/api/v1/auth/login",
+                        "/api/v1/auth/login-or-register",
                         "/api/v1/auth/register",
                         "/api/v1/auth/logout");
     }
@@ -48,7 +49,16 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
-                .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*")
+                .allowedOriginPatterns(
+                        "http://localhost:*",     // Vite dev / preview（带端口）
+                        "http://127.0.0.1:*",
+                        "http://localhost",       // Capacitor Android，androidScheme=http 时来源无端口
+                        "https://localhost",      // Capacitor Android，androidScheme=https
+                        "capacitor://localhost",  // Capacitor iOS
+                        "http://192.168.*:*",     // 手机浏览器直连局域网后端（调试）
+                        "https://*.ngrok-free.app", // 内网穿透（ngrok 免费域名）
+                        "https://*"               // 其它公网穿透/部署域名（生产应收窄）
+                )
                 .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
                 .exposedHeaders(TraceIdFilter.HEADER)
