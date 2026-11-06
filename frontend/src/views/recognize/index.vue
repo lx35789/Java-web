@@ -158,22 +158,30 @@ function reRecognize() {
 }
 
 async function adopt(r) {
+  if (!r.speciesId) {
+    ElMessage.warning('该物种暂未收录到植物库，请到植物库手动选择')
+    return
+  }
   try {
     await ElMessageBox.confirm(
-      `将「${r.commonName}」加入我的植物，并自动生成养护计划？`,
+      `将「${r.commonName}」加入我的植物？`,
       '确认添加',
       { confirmButtonText: '加入我的植物', cancelButtonText: '再看看' }
     )
   } catch {
     return
   }
-  await confirmRecognition(result.value.recordId, {
-    speciesId: r.speciesId,
-    createPlant: true,
-    userPlantForm: { location: '客厅', lightLevel: 'MEDIUM' }
-  })
-  ElMessage.success('已加入我的植物，养护计划已生成')
-  router.push('/plants')
+  try {
+    await confirmRecognition(result.value.recordId, {
+      speciesId: r.speciesId,
+      createPlant: true,
+      userPlantForm: { location: '客厅', lightLevel: 'MEDIUM' }
+    })
+    ElMessage.success('已加入我的植物')
+    router.push('/plants')
+  } catch {
+    /* 错误提示已由响应拦截器统一处理 */
+  }
 }
 
 // 骨架阶段不提示未使用变量

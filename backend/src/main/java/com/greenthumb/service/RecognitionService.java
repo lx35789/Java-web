@@ -1,5 +1,9 @@
 package com.greenthumb.service;
 
+import com.greenthumb.common.BizException;
+import com.greenthumb.common.ErrorCode;
+import com.greenthumb.dto.ConfirmRecognitionRequest;
+import com.greenthumb.dto.CreatePlantRequest;
 import com.greenthumb.entity.PlantPhotoEntity;
 import com.greenthumb.entity.PlantSpeciesEntity;
 import com.greenthumb.entity.RecognitionRecordEntity;
@@ -9,6 +13,7 @@ import com.greenthumb.mapper.RecognitionRecordMapper;
 import com.greenthumb.mapper.RecognitionResultMapper;
 import com.greenthumb.recognition.RecognitionCandidate;
 import com.greenthumb.recognition.RecognitionOrchestrator;
+import com.greenthumb.vo.ConfirmRecognitionVO;
 import com.greenthumb.vo.RecognitionVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +26,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -44,17 +50,20 @@ public class RecognitionService {
     private final RecognitionRecordMapper recordMapper;
     private final RecognitionResultMapper resultMapper;
     private final PlantSpeciesMapper plantSpeciesMapper;
+    private final MyPlantService myPlantService;
 
     public RecognitionService(PhotoService photoService,
                               RecognitionOrchestrator orchestrator,
                               RecognitionRecordMapper recordMapper,
                               RecognitionResultMapper resultMapper,
-                              PlantSpeciesMapper plantSpeciesMapper) {
+                              PlantSpeciesMapper plantSpeciesMapper,
+                              MyPlantService myPlantService) {
         this.photoService = photoService;
         this.orchestrator = orchestrator;
         this.recordMapper = recordMapper;
         this.resultMapper = resultMapper;
         this.plantSpeciesMapper = plantSpeciesMapper;
+        this.myPlantService = myPlantService;
     }
 
     @Transactional
@@ -154,8 +163,64 @@ public class RecognitionService {
                 rec.getLatencyMs(), low, false, items);
     }
 
-    /* ================= 内部 ================= */
+    /**
+     * 确认识别结果（用户选定最终物种），可选同时创建一盆植物。
+     *
+     * 前端的「加入我的植物」按钮就调这个。之前接口不存在，点下去报
+     * 「接口不存在」，但 Mock 里有实现（mock/index.js 的
+     * route('POST', '/recognitions/:id/confirm')），所以浏览器里看不出问题，
+     * 只有真机走真实接口才暴露。
+     *
+     * @param userId  当前登录用户（用于校验记录归属，防越权）
+     * @param recordId 识别记录 id
+     * @param req     确认请求；createPlant=true 时创建植物
+     */
+    @Transactional
+    public ConfirmRecognitionVO confirm(Long userId, Long recordId, ConfirmRecognitionRequest req) {
+        RecognitionRecordEntity rec = recordMapper.selectById(recordId);
+        if (rec == null || !Objects.equals(rec.getUserId(), userId)) {
+            throw new BizException(ErrorCode.NOT_FOUND, "识别记录不存在");
+        }
+        if (req == null || req.speciesId() == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "请选择要确认的物种");
+        }
+        if (plantSpeciesMapper.selectById(req.speciesId()) == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "植物种类不存在");
+        }
 
+        Long userPlantId = null;
+        if (Boolean.TRUE.equals(req.createPlant())) {
+            ConfirmRecognitionRequest.UserPlantForm f = req.userPlantForm();
+            CreatePlantRequest cp = new CreatePlantRequest(
+                    req.speciesId(),
+                    f == null ? null : f.nickname(),
+                    f == null ? null : f.location(),
+                    f == null ? null : f.lightLevel(),
+                    f == null ? null : f.potSize(),
+                    f == null ? null : f.potMaterial(),
+                    f == null ? null : f.soilType(),
+                    f == null ? null : f.acquiredDate(),
+                    f == null ? null : f.note());
+            userPlantId = myPlantService.create(userId, cp).id();
+        }
+
+        // 回写确认状态。同时把 top1 改成用户选的物种：
+        // 用户纠正模型也是「训练/统计」的宝藏数据，不能只记一个 confirmed 标志。
+        RecognitionRecordEntity patch = new RecognitionRecordEntity();
+        patch.setId(rec.getId());
+        patch.setConfirmed(1);
+        patch.setTop1SpeciesId(req.speciesId());
+        if (userPlantId != null) {
+            patch.setUserPlantId(userPlantId);
+        }
+        recordMapper.updateById(patch);
+
+        log.info("确认识别记录 {}：speciesId={} userPlantId={}", recordId, req.speciesId(), userPlantId);
+        // 养护计划模块尚未实现，如实返回 false，不谎报成功
+        return new ConfirmRecognitionVO(userPlantId, false, req.speciesId());
+    }
+
+    /* ================= 内部 ================= */
     /**
      * 把第三方返回的名字映射到植物库。
      * 匹配顺序：中文名精确 → 学名精确 → 别名包含。

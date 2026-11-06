@@ -90,7 +90,9 @@ public class MyPlantService {
         UserPlantEntity p = new UserPlantEntity();
         p.setUserId(userId);
         p.setSpeciesId(req.speciesId());
-        p.setNickname(blankToNull(req.nickname()));
+        p.setNickname(blankToNull(req.nickname()) != null
+                ? req.nickname().trim()
+                : species.getCommonName());   // 没填昵称就用物种名，避免列表里显示空白
         p.setLocation(blankToNull(req.location()));
         p.setLightLevel(blankToNull(req.lightLevel()));
         p.setPotSize(blankToNull(req.potSize()));

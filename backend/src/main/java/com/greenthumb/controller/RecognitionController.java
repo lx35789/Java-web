@@ -2,8 +2,10 @@ package com.greenthumb.controller;
 
 import com.greenthumb.common.ApiResponse;
 import com.greenthumb.common.CurrentUser;
+import com.greenthumb.dto.ConfirmRecognitionRequest;
 import com.greenthumb.dto.RecognitionRequest;
 import com.greenthumb.service.RecognitionService;
+import com.greenthumb.vo.ConfirmRecognitionVO;
 import com.greenthumb.vo.RecognitionVO;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,8 +16,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * 物种识别。路径与 frontend/src/api/recognition.js 对应：
- *   POST /api/v1/recognitions        { photoId }
+ *   POST /api/v1/recognitions                 { photoId }
  *   GET  /api/v1/recognitions/{id}
+ *   POST /api/v1/recognitions/{id}/confirm    { speciesId, createPlant, userPlantForm }
  * <p>
  * 路径变量限制为纯数字，否则 /recognitions/history 会被当成 id 匹配。
  */
@@ -38,5 +41,12 @@ public class RecognitionController {
     @GetMapping("/{id:\\d+}")
     public ApiResponse<RecognitionVO> get(@PathVariable("id") Long id) {
         return ApiResponse.ok(recognitionService.get(CurrentUser.id(), id));
+    }
+
+    /** 确认识别结果，可选同时创建一盆植物（前端「加入我的植物」） */
+    @PostMapping("/{id:\\d+}/confirm")
+    public ApiResponse<ConfirmRecognitionVO> confirm(@PathVariable("id") Long id,
+                                                     @RequestBody ConfirmRecognitionRequest request) {
+        return ApiResponse.ok(recognitionService.confirm(CurrentUser.id(), id, request));
     }
 }

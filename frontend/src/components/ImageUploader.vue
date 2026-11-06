@@ -75,7 +75,9 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { Loading, Camera, Picture, Delete } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { compressImage, formatBytes } from '@/utils/image'
+import { hasCameraPlugin, isNative, pickPhotoNative } from '@/utils/nativeCamera'
 
 const props = defineProps({
   /** 选中的 File 对象 */
@@ -94,6 +96,9 @@ const processing = ref(false)
 const originalSize = ref(0)
 const sheetVisible = ref(false)
 let objectUrl = ''
+
+/** 原生容器且已装 Camera 插件时才走原生路径 */
+const nativeMode = isNative() && hasCameraPlugin()
 
 const file = computed(() => props.modelValue)
 
@@ -148,6 +153,11 @@ onBeforeUnmount(revoke)
 
 function onAreaClick() {
   if (processing.value) return
+  // 原生：直接交给系统面板（拍照 / 从相册选择），不弹自绘面板
+  if (nativeMode) {
+    void pickNative('Prompt')
+    return
+  }
   if (isTouch()) {
     sheetVisible.value = true
   } else {
@@ -157,13 +167,48 @@ function onAreaClick() {
 
 function pickCamera() {
   sheetVisible.value = false
+  if (nativeMode) {
+    void pickNative('Camera')
+    return
+  }
   // 有些浏览器要求 click 与用户手势在同一事件循环内，故用 setTimeout 让面板关闭先渲染
   setTimeout(() => cameraRef.value?.click(), 0)
 }
 
 function pickGallery() {
   sheetVisible.value = false
+  if (nativeMode) {
+    void pickNative('Photos')
+    return
+  }
   setTimeout(() => galleryRef.value?.click(), 0)
+}
+
+/**
+ * 走 Capacitor Camera 插件。
+ * 原生环境下不再依赖 input[capture] —— 部分国产 ROM 会让
+ * ACTION_IMAGE_CAPTURE 解析失败，Capacitor 静默降级到相册
+ * （表现就是「点拍照进了相册」）。
+ */
+async function pickNative(source) {
+  if (processing.value) return
+  processing.value = true
+  try {
+    const f = await pickPhotoNative(source)
+    if (!f) return // 用户取消
+    const compressed = await compressImage(f)
+    originalSize.value = f.size
+    emit('update:modelValue', compressed)
+    emit('change', compressed)
+  } catch (e) {
+    // 用户取消在部分设备上也会进 catch，不当作错误弹窗
+    const msg = String(e?.message || e || '')
+    if (!/cancel/i.test(msg)) {
+      ElMessage?.error?.('打开相机失败：' + msg)
+    }
+  } finally {
+    processing.value = false
+  }
 }
 
 function onSheetRemove() {
