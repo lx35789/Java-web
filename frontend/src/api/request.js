@@ -191,6 +191,22 @@ service.interceptors.response.use(
       else if (status === 404) msg = '接口不存在'
       else if (status >= 500) msg = '服务器开小差了'
     }
+
+    // 连不上服务器时，把「当前用的是哪个地址」告诉用户。
+    // 否则只显示「网络异常」，用户根本不知道是地址过期（换 Wi-Fi / 换热点后
+    // IP 变了，localStorage 里还存着上一次的地址，这是最常见的原因）。
+    const noResponse = !error.response
+    if (noResponse) {
+      msg = `连不上服务器（${getApiBase()}），请检查网络或在「服务器设置」里修改地址`
+      ElMessage({
+        type: 'error',
+        message: msg,
+        duration: 6000,
+        showClose: true
+      })
+      return Promise.reject(error)
+    }
+
     ElMessage.error(msg)
     return Promise.reject(error)
   }

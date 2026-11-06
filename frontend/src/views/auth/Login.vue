@@ -95,7 +95,18 @@
           · 公网穿透：<code>https://xxxx.ngrok-free.app</code><br />
           只填主机时会自动补全 <code>/api/v1</code>。
         </div>
+        <!-- 测试结果：把「地址对不对」和「后端开没开」分开告知。
+             以前这两个错误都显示「网络异常」，用户无法判断该改地址还是该启动后端 -->
+        <el-alert
+          v-if="testState"
+          :type="testState === 'ok' ? 'success' : 'error'"
+          :closable="false"
+          show-icon
+          class="gt-mt-8"
+          :title="testState === 'ok' ? '连接成功，服务器可用' : '连接失败：地址不可达或后端未启动'"
+        />
         <template #footer>
+          <el-button size="small" :loading="testing" @click="onTestServer">测试连接</el-button>
           <el-button size="small" @click="serverDialog = false">取消</el-button>
           <el-button size="small" @click="onRestoreServer">恢复默认</el-button>
           <el-button size="small" type="primary" @click="onSaveServer">保存并重载</el-button>
@@ -106,11 +117,18 @@
 </template>
 
 <script setup>
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
-import { DEFAULT_API_BASE, getApiBase, setApiBase } from '@/utils/serverConfig'
+import {
+  DEFAULT_API_BASE,
+  ensureApiBaseUsable,
+  getApiBase,
+  normalizeApiBase,
+  probeApiBase,
+  setApiBase
+} from '@/utils/serverConfig'
 import { USE_MOCK } from '@/api/request'
 
 const route = useRoute()
@@ -126,10 +144,42 @@ const form = reactive({ username: 'demo', password: 'demo1234' })
 const serverDialog = ref(false)
 const serverInput = ref('')
 const apiBaseLabel = ref(getApiBase())
+const testing = ref(false)
+/** null=未测  'ok'=通  'fail'=不通 */
+const testState = ref(null)
+
+/*
+ * 进入登录页先自检一次地址：
+ *   之前 IP / 穿透域名一变，所有请求就超时，界面只写「网络异常」，
+ *   用户完全不知道要去改服务器地址，表现为「登录不进去」且毫无线索。
+ */
+onMounted(async () => {
+  if (USE_MOCK === true || USE_MOCK === 'true') return
+  const r = await ensureApiBaseUsable()
+  if (r.changed) {
+    apiBaseLabel.value = getApiBase()
+    ElMessage.warning({
+      message: `原服务器地址已失效，已自动切换到 ${r.to}`,
+      duration: 6000
+    })
+  }
+})
 
 function openServerDialog() {
   serverInput.value = getApiBase()
+  testState.value = null
   serverDialog.value = true
+}
+
+async function onTestServer() {
+  testing.value = true
+  testState.value = null
+  try {
+    const ok = await probeApiBase(serverInput.value, 4000)
+    testState.value = ok ? 'ok' : 'fail'
+  } finally {
+    testing.value = false
+  }
 }
 
 function onSaveServer() {

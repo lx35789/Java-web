@@ -59,6 +59,98 @@ export function isAbsoluteApiBase(base = getApiBase()) {
   return /^https?:\/\//i.test(base)
 }
 
+/**
+ * 探测某个服务器地址是否可用。
+ *
+ * 用 /ping（后端公开接口，不查库、不走鉴权）而不是带鉴权的接口：
+ *   - 未登录时也能探测，返回 200 即说明「地址对 + 网络通」
+ *   - 代价极小，不会因为库出问题而误判地址错误
+ *
+ * @param base 候选地址（会规范化）
+ * @param timeoutMs 超时，默认 2500ms —— 地址写错时走的是 TCP 超时，
+ *                  局域网正确地址通常 <200ms，2.5s 足够区分
+ * @returns {Promise<boolean>}
+ */
+export async function probeApiBase(base, timeoutMs = 2500) {
+  const raw = String(base ?? '').trim() || DEFAULT_API_BASE
+  // 先判断是否已是绝对地址再规范化：
+  // normalizeApiBase 会给无协议的值补 http://，但开发模式的默认值是相对路径
+  // （/api/v1，由 vite 代理转发），补成 http:///api/v1 永远探测失败。
+  let abs
+  if (/^https?:\/\//i.test(raw)) {
+    abs = normalizeApiBase(raw)
+  } else if (raw.startsWith('/')) {
+    try {
+      abs = new URL(raw, window.location.origin).href
+    } catch {
+      abs = raw
+    }
+  } else {
+    abs = normalizeApiBase(raw)
+  }
+  const url = `${String(abs).replace(/\/+$/, '')}/ping`
+  const controller = typeof AbortController === 'function' ? new AbortController() : null
+  const timer = setTimeout(() => controller?.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      signal: controller?.signal,
+      cache: 'no-store',
+      headers: { Accept: 'application/json' }
+    })
+    // 只要 HTTP 通了就算可达；即使返回非 2xx 也说明地址是对的
+    return res.ok || res.status === 401 || res.status === 403
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * 启动时的地址自检。
+ *
+ * 要解决的问题：内网穿透域名 / 局域网 DHCP 地址会变，而 localStorage 里
+ * 存的是**上一次能用**的地址。地址一变，App 的每个请求都超时，
+ * 界面上只显示「网络异常」，用户根本想不到是地址过期了。
+ *
+ * 策略：
+ *   1) 当前地址能通 → 什么都不做（正常情况下零开销，一次轻量 GET）
+ *   2) 当前地址不通，且与构建默认值不同 → 探测默认值
+ *        能通 → 自动切回默认，并告知用户
+ *        不通 → 不动，交由界面提示（可能是后端没开）
+ *
+ * @returns {Promise<{changed:boolean, from?:string, to?:string}>}
+ */
+export async function ensureApiBaseUsable() {
+  const current = getApiBase()
+  if (await probeApiBase(current)) return { changed: false }
+
+  const fallback = DEFAULT_API_BASE
+  // 比较前统一形态：相对路径不能被 normalizeApiBase 改成 http:///… 后拿来比
+  const same = (a, b) => {
+    const f = (v) => {
+      const s = String(v ?? '').trim()
+      if (s.startsWith('/')) return s.replace(/\/+$/, '')
+      return normalizeApiBase(s)
+    }
+    return f(a) === f(b)
+  }
+  if (!fallback || same(fallback, current)) {
+    return { changed: false }
+  }
+  if (await probeApiBase(fallback)) {
+    // 删掉过期设置，回到构建默认值
+    try {
+      localStorage.removeItem(STORAGE_KEY)
+    } catch {
+      /* 隐私模式忽略 */
+    }
+    return { changed: true, from: current, to: fallback }
+  }
+  return { changed: false }
+}
+
 /** 后端文件（/files/xxx.jpg）转绝对地址；相对路径在 App 内会拼到 WebView 自身，必须补全 */
 export function fileUrl(path) {
   if (!path) return ''
