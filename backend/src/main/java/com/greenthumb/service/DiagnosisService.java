@@ -64,6 +64,8 @@ public class DiagnosisService {
     private static final Set<String> VALID_STATUS = Set.of("OPEN", "TREATING", "RESOLVED");
     private static final String DISCLAIMER = "以上为园艺级处理建议，不构成农药使用指导。";
     private static final double LOW_CONFIDENCE = 0.5d;
+    /** 该物种支持的类别数不超过此值时，返回中追加覆盖度警告（防漏诊） */
+    private static final int NARROW_COVERAGE_MAX = 3;
     /**
      * 自训模型的最低信任门槛：低于此值不当作结论，转兜底链路复核。
      * <p>
@@ -206,8 +208,53 @@ public class DiagnosisService {
                         + "建议先隔离观察，并到「AI 问答」里补充描述。"
                         : info.getTreatment(),
                 info == null ? null : info.getPrevention(),
-                DISCLAIMER,
+                buildNote(pred),
                 true, null, pred.latencyMs(), confidence < LOW_CONFIDENCE);
+    }
+
+    /**
+     * 拼接给用户看的备注：免责声明 + 模型覆盖度警告。
+     *
+     * 为什么必须加覆盖度警告（实测依据）：
+     *   仙人掌在本模型里只有 2 类（健康 / 胭脂虫）。拿一张“软腐”外观的图去测，
+     *   模型给出「健康 88.7%」——置信度很高，结论却是漏诊。
+     *   类别少的物种遇到未覆盖的病害必然这样，不告知用户就是误导。
+     */
+    private String buildNote(AiClientService.Prediction pred) {
+        StringBuilder sb = new StringBuilder(DISCLAIMER);
+        Integer cnt = pred.speciesClassCount();
+        if (cnt != null && cnt <= NARROW_COVERAGE_MAX) {
+            sb.append("\n本模型对该作物仅覆盖 ")
+              .append(cnt)
+              .append(" 种状态（")
+              .append(coverageNames(pred.speciesClasses()))
+              .append("）。若出现软腐、日灼、根腐等未覆盖症状，模型可能判为「健康」，")
+              .append("请用「症状判因」补充描述。");
+        }
+        return sb.toString();
+    }
+
+    /** 把类别编码翻译成中文短名，避免正文里出现 Cactus_Healthy 这种字符串 */
+    private String coverageNames(java.util.List<String> classes) {
+        if (classes == null || classes.isEmpty()) {
+            return "";
+        }
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String code : classes) {
+            DiseaseInfoEntity d = diseaseInfoMapper.selectOne(
+                    new LambdaQueryWrapper<DiseaseInfoEntity>()
+                            .eq(DiseaseInfoEntity::getCode, code).last("limit 1"));
+            String n = d == null ? null : d.getNameCn();
+            if (n == null) {
+                // 知识库没收录时用编码的后半段，总比整串编码好读
+                int i = code.indexOf('_');
+                n = i > 0 ? code.substring(i + 1).replace('_', ' ') : code;
+            }
+            // 「仙人掌·健康」在提示里写成「健康」更自然
+            int dot = n.indexOf('·');
+            out.add(dot >= 0 ? n.substring(dot + 1) : n);
+        }
+        return String.join("、", out);
     }
 
     /* ==================== 2. 生理性：症状判因 ==================== */

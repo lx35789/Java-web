@@ -70,7 +70,16 @@ public class AiClientService {
     public record Item(String code, String nameCn, String species, String disease, double confidence) {
     }
 
-    public record Prediction(boolean available, String reason, List<Item> topK, int latencyMs) {
+    public record Prediction(boolean available, String reason, List<Item> topK, int latencyMs,
+                             /** 该物种在本模型里支持的类别数；null 表示未知（未按物种过滤） */
+                             Integer speciesClassCount,
+                             /** 该物种支持的类别清单，用于告知用户「只认这几种」 */
+                             List<String> speciesClasses) {
+
+        /** 兼容旧调用：不关心覆盖度时用 */
+        public Prediction(boolean available, String reason, List<Item> topK, int latencyMs) {
+            this(available, reason, topK, latencyMs, null, List.of());
+        }
     }
 
     /** 模型是否就绪（带 30 秒缓存） */
@@ -153,6 +162,13 @@ public class AiClientService {
                 return new Prediction(false, why, List.of(), latency);
             }
 
+            Integer clsCount = root.path("speciesClassCount").isNumber()
+                    ? root.path("speciesClassCount").asInt() : null;
+            List<String> clsList = new ArrayList<>();
+            for (JsonNode c : root.path("speciesClasses")) {
+                clsList.add(c.asText());
+            }
+
             List<Item> items = new ArrayList<>();
             for (JsonNode n : root.path("topK")) {
                 items.add(new Item(
@@ -165,9 +181,9 @@ public class AiClientService {
                 // 不要统一替换成"没有返回候选"——那样用户完全不知道发生了什么。
                 String why = root.path("reason").isMissingNode() || root.path("reason").isNull()
                         ? "模型没有返回任何候选" : root.path("reason").asText();
-                return new Prediction(false, why, List.of(), latency);
+                return new Prediction(false, why, List.of(), latency, clsCount, clsList);
             }
-            return new Prediction(true, null, items, latency);
+            return new Prediction(true, null, items, latency, clsCount, clsList);
 
         } catch (Exception e) {
             int latency = (int) (System.currentTimeMillis() - t0);
