@@ -41,22 +41,26 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <!--
-        注意：这里故意 **不** 声明 android.permission.CAMERA。
+        相机权限：应用内相机（getUserMedia）需要它。
 
-        拍照链路：input[type=file][capture] + accept="image/*"
-          → Capacitor BridgeWebChromeClient.onShowFileChooser
-          → isMediaCaptureSupported() = hasPermissions(CAMERA) || !hasDefinedPermission(CAMERA)
-          → showImageCapturePicker() 用 MediaStore.ACTION_IMAGE_CAPTURE 调系统相机
+        调用链：
+          CameraCapture.vue → navigator.mediaDevices.getUserMedia()
+          → WebView → BridgeWebChromeClient.onPermissionRequest
+          → 看到 resource.VIDEO_CAPTURE → 申请 Manifest.permission.CAMERA
 
-        声明了 CAMERA 但用户未授权时，Capacitor 会弹运行时权限框；
-        一旦拒绝，就 filePathCallback.onReceiveValue(null)，前端只能看到
-        “change 事件但没有文件”，表现为点「拍照」无任何反应且无提示。
-        不声明则直接走系统相机 App，无需任何权限，体验最稳。
+        注意：这里**必须声明**。若未声明，Capacitor 的 permissionLauncher
+        无权限可申请，WebView 的 PermissionRequest 不会被 grant，
+        getUserMedia 直接 reject（NotAllowedError），用户只会看到
+        「相机权限被拒绝」，而在系统设置里根本找不到这个 App 的相机开关。
 
-        从相册选取走系统文件选择器（ACTION_GET_CONTENT / SAF），
-        同样不需要 READ_MEDIA_IMAGES 权限。
+        历史背景（为何曾经删过）：早期用 input[type=file][capture] 走系统相机，
+        那种路径下 hasDefinedPermission(CAMERA) 为 true 但未授权时，
+        Capacitor 会静默 onReceiveValue(null)，表现为点拍照毫无反应。
+        现在相机完全由应用内组件接管，不再依赖 input[capture]，
+        声明 CAMERA 只有好处。
 
-        required="false"：平板等无摄像头设备也可安装。
+        从相册选取走系统文件选择器（SAF），不需要 READ_MEDIA_IMAGES。
     -->
+    <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 </manifest>

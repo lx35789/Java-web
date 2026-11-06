@@ -8,36 +8,19 @@
         <div class="ph-desc">大图会压到长边 1600px，上传更快</div>
       </div>
       <div v-else class="placeholder">
-        <div class="ph-buttons">
-          <button type="button" class="ph-btn" @click.stop="pickCamera">
-            <el-icon :size="22"><Camera /></el-icon>
-            <span>拍照</span>
-          </button>
-          <button type="button" class="ph-btn" @click.stop="pickGallery">
-            <el-icon :size="22"><Picture /></el-icon>
-            <span>相册</span>
-          </button>
-        </div>
+        <el-icon :size="34" class="ph-icon"><Camera /></el-icon>
+        <div class="ph-title">点击拍照</div>
         <div class="ph-desc">{{ hint }}</div>
       </div>
-      <div v-if="previewUrl" class="mask">{{ processing ? '正在压缩…' : '点击更换' }}</div>
+      <div v-if="previewUrl" class="mask">{{ processing ? '正在压缩…' : '点击重拍' }}</div>
     </div>
 
     <!--
-      两个独立 input 是有意为之：
-        capture 存在  → 移动端系统直接拉起相机，不会给"从相册选择"的选项
-        capture 不存在 → 移动端弹出「相机 / 文件（相册）」选择器
-      只用一个 input 无法同时保证两个入口，所以拆成两个。
-      桌面浏览器两个都退化成文件选择器，因此桌面上不弹面板（见 onAreaClick）。
+      只有一个 input：相册入口。
+      相机不再走 input[capture] —— 那条路在部分国产 ROM 上会因
+      ACTION_IMAGE_CAPTURE 解析失败而静默退化成相册（表现就是「点拍照进了相册」）。
+      现在相机由应用内 CameraCapture 组件负责，本 input 只服务「从相册选」。
     -->
-    <input
-      ref="cameraRef"
-      type="file"
-      accept="image/*"
-      :capture="capture || 'environment'"
-      hidden
-      @change="onChange"
-    />
     <input ref="galleryRef" type="file" accept="image/*" hidden @change="onChange" />
 
     <div v-if="previewUrl" class="file-bar">
@@ -46,58 +29,44 @@
       <el-button text type="danger" size="small" @click="clear">移除</el-button>
     </div>
 
-    <!-- 底部动作面板：触屏设备上点图片/占位区时弹出，像原生 App 的相册选择 -->
-    <teleport to="body">
-      <transition name="sheet">
-        <div v-if="sheetVisible" class="sheet-mask" @click.self="sheetVisible = false">
-          <div class="sheet">
-            <div class="sheet-title">{{ previewUrl ? '更换照片' : '添加照片' }}</div>
-            <button type="button" class="sheet-item" @click="pickCamera">
-              <el-icon :size="20"><Camera /></el-icon>
-              <span>拍照</span>
-            </button>
-            <button type="button" class="sheet-item" @click="pickGallery">
-              <el-icon :size="20"><Picture /></el-icon>
-              <span>从相册选择</span>
-            </button>
-            <button v-if="previewUrl" type="button" class="sheet-item danger" @click="onSheetRemove">
-              <el-icon :size="20"><Delete /></el-icon>
-              <span>移除照片</span>
-            </button>
-            <button type="button" class="sheet-item cancel" @click="sheetVisible = false">取消</button>
-          </div>
-        </div>
-      </transition>
-    </teleport>
+    <!-- 应用内相机：左下角有「相册」入口 -->
+    <CameraCapture
+      v-model:visible="cameraVisible"
+      :facing="capture || 'environment'"
+      :hint="hint"
+      @capture="onCameraCapture"
+      @gallery="onGalleryFromCamera"
+      @fallback="useSystemCamera"
+    />
   </div>
 </template>
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { Loading, Camera, Picture, Delete } from '@element-plus/icons-vue'
+import { Loading, Camera } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { compressImage, formatBytes } from '@/utils/image'
 import { hasCameraPlugin, isNative, pickPhotoNative } from '@/utils/nativeCamera'
+import CameraCapture from '@/components/CameraCapture.vue'
 
 const props = defineProps({
   /** 选中的 File 对象 */
   modelValue: { type: Object, default: null },
-  hint: { type: String, default: '支持 jpg / png，不超过 10MB' },
-  /** 拍照时优先使用的摄像头：environment=后置（默认），user=前置 */
+  hint: { type: String, default: '把叶片放进取景框，光线充足、主体居中' },
+  /** 相机朝向：environment=后置（默认） user=前置 */
   capture: { type: String, default: 'environment' }
 })
 
 const emit = defineEmits(['update:modelValue', 'change'])
 
-const cameraRef = ref(null)
 const galleryRef = ref(null)
 const previewUrl = ref('')
 const processing = ref(false)
 const originalSize = ref(0)
-const sheetVisible = ref(false)
+const cameraVisible = ref(false)
 let objectUrl = ''
 
-/** 原生容器且已装 Camera 插件时才走原生路径 */
+/** 原生容器且装了 Camera 插件 —— 用于 getUserMedia 失败时兜底 */
 const nativeMode = isNative() && hasCameraPlugin()
 
 const file = computed(() => props.modelValue)
@@ -106,20 +75,13 @@ const sizeText = computed(() => {
   const s = props.modelValue?.size
   if (!s) return ''
   const now = formatBytes(s)
-  // 压缩后体积明显变小时，把原大小也标出来，避免用户误以为画质被严重破坏
   if (originalSize.value > s * 1.15) {
     return `${now}（原 ${formatBytes(originalSize.value)}）`
   }
   return now
 })
 
-/**
- * 是否为触摸设备（手机/平板）。
- *
- * 为什么要判断：桌面浏览器的 input[capture] 不会打开摄像头，而是退化成普通的
- * 文件选择器。桌面上再弹「拍照 / 相册」面板等于让用户多点一次无意义的按钮，
- * 所以桌面直接打开文件选择。
- */
+/** 触摸设备才用应用内相机；桌面上 getUserMedia 通常无摄像头，直接开文件选择 */
 function isTouch() {
   try {
     return window.matchMedia?.('(pointer: coarse)')?.matches ?? false
@@ -151,77 +113,75 @@ watch(
 
 onBeforeUnmount(revoke)
 
+/** 点一下直接拍照，不再弹「拍照 / 相册」选择 */
 function onAreaClick() {
   if (processing.value) return
-  // 原生：直接交给系统面板（拍照 / 从相册选择），不弹自绘面板
-  if (nativeMode) {
-    void pickNative('Prompt')
-    return
-  }
   if (isTouch()) {
-    sheetVisible.value = true
+    cameraVisible.value = true
   } else {
-    pickGallery()
+    // 桌面：没有摄像头，直接开文件选择
+    galleryRef.value?.click()
   }
 }
 
-function pickCamera() {
-  sheetVisible.value = false
-  if (nativeMode) {
-    void pickNative('Camera')
-    return
-  }
-  // 有些浏览器要求 click 与用户手势在同一事件循环内，故用 setTimeout 让面板关闭先渲染
-  setTimeout(() => cameraRef.value?.click(), 0)
+/** 应用内相机拍到照片 */
+async function onCameraCapture(f) {
+  await consume(f)
 }
 
-function pickGallery() {
-  sheetVisible.value = false
-  if (nativeMode) {
-    void pickNative('Photos')
-    return
-  }
-  setTimeout(() => galleryRef.value?.click(), 0)
+/** 在相机界面点左下角「相册」 */
+function onGalleryFromCamera() {
+  cameraVisible.value = false
+  setTimeout(() => {
+    if (nativeMode) {
+      void pickFromNativeAlbum()
+    } else {
+      galleryRef.value?.click()
+    }
+  }, 120)
 }
 
-/**
- * 走 Capacitor Camera 插件。
- * 原生环境下不再依赖 input[capture] —— 部分国产 ROM 会让
- * ACTION_IMAGE_CAPTURE 解析失败，Capacitor 静默降级到相册
- * （表现就是「点拍照进了相册」）。
- */
-async function pickNative(source) {
-  if (processing.value) return
+async function pickFromNativeAlbum() {
   processing.value = true
   try {
-    const f = await pickPhotoNative(source)
-    if (!f) return // 用户取消
-    const compressed = await compressImage(f)
-    originalSize.value = f.size
-    emit('update:modelValue', compressed)
-    emit('change', compressed)
+    const f = await pickPhotoNative('Photos')
+    if (f) await consume(f)
   } catch (e) {
-    // 用户取消在部分设备上也会进 catch，不当作错误弹窗
     const msg = String(e?.message || e || '')
-    if (!/cancel/i.test(msg)) {
-      ElMessage?.error?.('打开相机失败：' + msg)
-    }
+    if (!/cancel/i.test(msg)) ElMessage.error('打开相册失败：' + msg)
   } finally {
     processing.value = false
   }
 }
 
-function onSheetRemove() {
-  sheetVisible.value = false
-  clear()
+/** getUserMedia 不可用时的兜底：交给系统相机 */
+async function useSystemCamera() {
+  cameraVisible.value = false
+  if (!nativeMode) {
+    // 浏览器环境没有原生插件，退回文件选择
+    galleryRef.value?.click()
+    return
+  }
+  processing.value = true
+  try {
+    const f = await pickPhotoNative('Camera')
+    if (f) await consume(f)
+  } catch (e) {
+    const msg = String(e?.message || e || '')
+    if (!/cancel/i.test(msg)) ElMessage.error('打开相机失败：' + msg)
+  } finally {
+    processing.value = false
+  }
 }
 
 async function onChange(e) {
   const f = e.target.files?.[0]
-  // 允许重复选同一个文件
-  e.target.value = ''
+  e.target.value = ''   // 允许重复选同一个文件
   if (!f) return
+  await consume(f)
+}
 
+async function consume(f) {
   processing.value = true
   try {
     const compressed = await compressImage(f)
@@ -279,40 +239,18 @@ function clear() {
   box-sizing: border-box;
 }
 
-.ph-buttons {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 14px;
-  margin-bottom: 10px;
-}
-
-.ph-btn {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  width: 82px;
-  padding: 12px 0 10px;
-  border: 1px solid var(--gt-border);
-  border-radius: 10px;
-  background: #fff;
+.ph-icon {
   color: var(--gt-primary);
-  font-size: 13px;
-  cursor: pointer;
-  transition: border-color 0.18s ease, background 0.18s ease, transform 0.1s ease;
 }
 
-.ph-btn:hover {
-  border-color: var(--gt-primary);
-  background: #f3f8f5;
-}
-
-.ph-btn:active {
-  transform: scale(0.97);
+.ph-title {
+  margin-top: 8px;
+  font-size: 15px;
+  color: var(--gt-text-regular);
 }
 
 .ph-desc {
+  margin-top: 5px;
   font-size: 12px;
   line-height: 1.5;
 }
@@ -347,88 +285,5 @@ function clear() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* ---------- 底部动作面板 ---------- */
-.sheet-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
-  background: rgba(0, 0, 0, 0.42);
-  display: flex;
-  align-items: flex-end;
-}
-
-.sheet {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  background: #eef1ef;
-  border-radius: 14px 14px 0 0;
-  padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
-  box-sizing: border-box;
-}
-
-.sheet-title {
-  text-align: center;
-  font-size: 12px;
-  color: var(--gt-text-secondary);
-  padding: 8px 0 10px;
-}
-
-.sheet-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 15px 14px;
-  border: none;
-  background: #fff;
-  color: var(--gt-text-regular);
-  font-size: 15px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.sheet-item:first-of-type {
-  border-radius: 10px 10px 0 0;
-}
-
-.sheet-item:active {
-  background: #f2f5f3;
-}
-
-.sheet-item.danger {
-  color: #d9534f;
-}
-
-.sheet-item.cancel {
-  margin-top: 8px;
-  justify-content: center;
-  border-radius: 10px;
-  background: #f4f6f5;
-  color: var(--gt-text-secondary);
-  font-size: 14px;
-}
-
-.sheet-enter-active,
-.sheet-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.sheet-enter-active .sheet,
-.sheet-leave-active .sheet {
-  transition: transform 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
-}
-
-.sheet-enter-from,
-.sheet-leave-to {
-  opacity: 0;
-}
-
-.sheet-enter-from .sheet,
-.sheet-leave-to .sheet {
-  transform: translateY(100%);
 }
 </style>
