@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  拍照时的临时文件由 Capacitor 写在
+    getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+  即 /storage/emulated/0/Android/data/<包名>/files/Pictures/JPEG_xxx.jpg
+
+  这里显式声明 external-files-path，避免只靠 external-path 的祖先匹配；
+  否则 ACTION_IMAGE_CAPTURE 回写时会抛 FileUriExposedException，
+  表现为「点拍照后相机能开、拍完回到 App 却没图」。
+-->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <external-path name="my_images" path="." />
+    <external-files-path name="my_external_files" path="." />
     <cache-path name="my_cache_images" path="." />
 </paths>

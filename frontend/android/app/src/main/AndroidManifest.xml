@@ -39,4 +39,24 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!--
+        注意：这里故意 **不** 声明 android.permission.CAMERA。
+
+        拍照链路：input[type=file][capture] + accept="image/*"
+          → Capacitor BridgeWebChromeClient.onShowFileChooser
+          → isMediaCaptureSupported() = hasPermissions(CAMERA) || !hasDefinedPermission(CAMERA)
+          → showImageCapturePicker() 用 MediaStore.ACTION_IMAGE_CAPTURE 调系统相机
+
+        声明了 CAMERA 但用户未授权时，Capacitor 会弹运行时权限框；
+        一旦拒绝，就 filePathCallback.onReceiveValue(null)，前端只能看到
+        “change 事件但没有文件”，表现为点「拍照」无任何反应且无提示。
+        不声明则直接走系统相机 App，无需任何权限，体验最稳。
+
+        从相册选取走系统文件选择器（ACTION_GET_CONTENT / SAF），
+        同样不需要 READ_MEDIA_IMAGES 权限。
+
+        required="false"：平板等无摄像头设备也可安装。
+    -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 </manifest>
