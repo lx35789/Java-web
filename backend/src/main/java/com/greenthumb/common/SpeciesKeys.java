@@ -25,6 +25,11 @@ public final class SpeciesKeys {
         PREFIX.put("姜黄", "Turmeric");
         PREFIX.put("扶桑", "Hibiscus");
         PREFIX.put("菊花", "Chrysanthemum");
+        // v2 新增（模型已覆盖 9 物种 / 37 类）
+        PREFIX.put("仙人掌", "Cactus");
+        PREFIX.put("虎皮兰", "Snake_Plant");
+        PREFIX.put("虎尾兰", "Snake_Plant");   // 同物异名
+        PREFIX.put("吊兰", "Spider_Plant");
     }
 
     private SpeciesKeys() {

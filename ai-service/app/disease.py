@@ -64,6 +64,10 @@ SPECIES_CN = {
     "Turmeric": "姜黄",
     "Hibiscus": "扶桑",
     "Chrysanthemum": "菊花",
+    # v2 新增（labels.json 里是空格形式）
+    "Cactus": "仙人掌",
+    "Snake Plant": "虎皮兰",
+    "Spider Plant": "吊兰",
 }
 
 # 指定物种时，该物种所有类别的概率合计至少要达到这个值，否则视为

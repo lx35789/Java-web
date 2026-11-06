@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import random
+import re
 import sys
 import time
 from collections import Counter
@@ -51,6 +52,14 @@ CN = {
     "Turmeric_Leaf_Spot": "姜黄·叶斑病",
     "Turmeric_Aphid_Infestation": "姜黄·蚜虫危害",
     "Turmeric_Leaf_Necrosis": "姜黄·叶枯坏死",
+    "Cactus_Healthy": "仙人掌·健康",
+    "Cactus_Dactylopius_Opuntia": "仙人掌·胭脂虫危害",
+    "Snake_Plant_Healthy": "虎皮兰·健康",
+    "Snake_Plant_Anthracnose": "虎皮兰·炭疽病",
+    "Snake_Plant_Leaf_Withering": "虎皮兰·叶片枯萎",
+    "Spider_Plant_Healthy": "吊兰·健康",
+    "Spider_Plant_Fungal_leaf_spot": "吊兰·真菌性叶斑病",
+    "Spider_Plant_Leaf_Tip_Necrosis": "吊兰·叶尖坏死",
 }
 
 LOGF = None
@@ -273,7 +282,32 @@ def collect_backgrounds(root, limit=120, max_side=384):
     return out
 
 
-def stratified_split(items, classes, ratios=(0.7, 0.15, 0.15), seed=42):
+def split_group_key(path):
+    """从文件名推断「原图组」标识。
+
+    prep_combined.py 的输出形如 g0003__Aloe_Anthracnose_007.jpg；
+    未预处理的 Roboflow 数据形如 X_jpg.rf.<hash>.jpg；
+    普通数据退化为文件名本身（等价于按文件切分）。
+    """
+    base = os.path.basename(path)
+    if "__" in base:
+        return base.split("__", 1)[0]
+    m = re.match(r"^(.*?)_(?:jpg|jpeg|png)\.rf\.[0-9a-f]+\.", base, re.I)
+    if m:
+        return m.group(1)
+    return os.path.splitext(base)[0]
+
+
+def stratified_split(items, classes, ratios=(0.7, 0.15, 0.15), seed=42, group_split=True):
+    """分层切分。group_split=True 时按「原图组」切分而不是按文件切分。
+
+    为什么必须按组：
+      部分数据集（Roboflow 导出）把同一张原图增广成 3 份，文件名形如
+      `X_jpg.rf.<hash>.jpg`，或经 prep_combined.py 处理后为 `g0003__X.jpg`。
+      若按文件随机切，同一原图的 3 个副本会同时进训练集和测试集，
+      测试准确率虚高几个点，且不报任何错。
+      按组切可保证同一原图的所有副本只落在同一个 split。
+    """
     rng = random.Random(seed)
     by_cls = {}
     for p, c in items:
@@ -281,14 +315,33 @@ def stratified_split(items, classes, ratios=(0.7, 0.15, 0.15), seed=42):
     tr, va, te = [], [], []
     for c in classes:
         ps = sorted(by_cls[c])
-        rng.shuffle(ps)
-        n = len(ps)
-        n_va = max(1, int(n * ratios[1]))
-        n_te = max(1, int(n * ratios[2]))
         idx = classes.index(c)
-        va += [(p, idx) for p in ps[:n_va]]
-        te += [(p, idx) for p in ps[n_va:n_va + n_te]]
-        tr += [(p, idx) for p in ps[n_va + n_te:]]
+
+        if group_split:
+            groups = {}
+            for p in ps:
+                groups.setdefault(split_group_key(p), []).append(p)
+            gkeys = sorted(groups.keys())
+            rng.shuffle(gkeys)
+            n = len(gkeys)
+            # 组数太少（<3）时不分验证/测试，避免出现空集
+            n_va = max(1, int(n * ratios[1])) if n >= 3 else 0
+            n_te = max(1, int(n * ratios[2])) if n >= 3 else 0
+            for gk in gkeys[:n_va]:
+                va += [(p, idx) for p in groups[gk]]
+            for gk in gkeys[n_va:n_va + n_te]:
+                te += [(p, idx) for p in groups[gk]]
+            for gk in gkeys[n_va + n_te:]:
+                tr += [(p, idx) for p in groups[gk]]
+        else:
+            rng.shuffle(ps)
+            n = len(ps)
+            n_va = max(1, int(n * ratios[1]))
+            n_te = max(1, int(n * ratios[2]))
+            va += [(p, idx) for p in ps[:n_va]]
+            te += [(p, idx) for p in ps[n_va:n_va + n_te]]
+            tr += [(p, idx) for p in ps[n_va + n_te:]]
+
     rng.shuffle(tr)
     return tr, va, te
 
@@ -314,6 +367,8 @@ def main():
                     help="自动裁掉黑边（针对芦荟那种'叶片+黑底'的图）；1=开 0=关")
     ap.add_argument("--replace-bg", type=float, default=0.0,
                     help="黑底替换概率 0~1（芦荟那类'叶片+黑底'数据建议设 1.0）")
+    ap.add_argument("--group-split", type=int, default=1,
+                    help="按原图组切分 1=开（防增广图跨训练/测试泄漏）0=按文件切分")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -350,8 +405,12 @@ def main():
         items = kept
         log("按每类上限 %d 抽样后：%d 张" % (args.cap, len(items)))
 
-    tr, va, te = stratified_split(items, classes, seed=args.seed)
-    log("切分：train=%d  val=%d  test=%d" % (len(tr), len(va), len(te)))
+    tr, va, te = stratified_split(items, classes, seed=args.seed,
+                                  group_split=bool(args.group_split))
+    log("切分：train=%d(%d组)  val=%d(%d组)  test=%d(%d组)  按组切分=%s" % (
+        len(tr), len({split_group_key(p) for p, _ in tr}),
+        len(va), len({split_group_key(p) for p, _ in va}),
+        len(te), len({split_group_key(p) for p, _ in te}), bool(args.group_split)))
 
     mean = (0.485, 0.456, 0.406)
     std = (0.229, 0.224, 0.225)

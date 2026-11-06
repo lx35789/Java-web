@@ -22,7 +22,8 @@
 mysql -u root -p -e "CREATE DATABASE greenthumb DEFAULT CHARSET utf8mb4;"
 mysql -u root -p greenthumb < db/schema.sql
 mysql -u root -p greenthumb < db/seed.sql          # 14 个物种
-mysql -u root -p greenthumb < db/seed_disease.sql  # 29 个病害知识
+mysql -u root -p greenthumb < db/seed_disease.sql  # 29 个病害知识（v1）
+mysql -u root -p greenthumb < db/seed_disease_v2.sql # +8 个病害知识（v2，可重复执行）
 mysql -u root -p greenthumb < db/seed_symptom.sql  # 症状规则
 ```
 
@@ -92,16 +93,26 @@ npm run dev
 
 **方式 A：自己训练**（需要数据集，见 `ai-service/train/README`）
 ```bash
+# 先把多个来源的数据合并、去重、按原图分组并缩放到 448px
+python ai-service/train/prep_combined.py --cap-groups 400 --max-side 448
+
 python ai-service/train/train_indoor.py \
-  --data <数据集目录> --out ai-service/models \
-  --arch mobilenetv3_large_100 --img-size 160 --epochs 29 --lr 3e-3
+  --data D:\indoor-plant-data\combined_v2 --out D:\indoor-plant-data\general_v2 \
+  --arch mobilenetv3_large_100 --img-size 160 --epochs 25 --batch 64 \
+  --cap 0 --group-split 1
+
+python ai-service/train/export_to_service.py \
+  --src D:\indoor-plant-data\general_v2 --dst ai-service/models
 ```
+
+> `--group-split 1` 不是可选项：数据里同一张原图可能被增广成多份，
+> 按文件随机切分会让副本跨训练/测试泄漏，准确率虚高且不报错。详见 `docs/25`。
 
 **方式 B：向项目负责人索要**已训练好的 `disease.onnx` + `labels.json` + `meta.json`，放到：
 
 ```
 ai-service/models/
-├── disease.onnx                 通用模型（29 类，6 物种）
+├── disease.onnx                 通用模型（37 类，9 物种）
 └── specialized/
     └── aloe/disease.onnx        芦荟专用模型（5 类）
 ```
@@ -194,8 +205,12 @@ AI 服务（内部，端口 8000）：
 
 | 模型 | 骨干 | 输入 | 测试准确率 | Top-3 |
 |---|---|---|---|---|
-| 通用 29 类 | MobileNetV3-Large | 160 | **93.69%** | 98.11% |
+| 通用 37 类（v2） | MobileNetV3-Large | 160 | **93.29%** | 98.10% |
+| 通用 29 类（v1） | MobileNetV3-Large | 160 | 93.69% | 98.11% |
 | 芦荟专用 5 类 | MobileNetV3-Large | 224 | **74.81%** | 95.05% |
+
+> v2 把覆盖从 6 物种 / 29 类扩到 **9 物种 / 37 类**（新增仙人掌、虎皮兰、吊兰），
+> 类别变多的情况下准确率只降 0.4 个百分点。详见 `docs/25-模型v2-9物种37类.md`。
 
 > 以上为同分布留出测试集成绩。真实拍照场景（换背景/构图/光照）会明显下降，
 > 这是本领域公认的域偏移问题，详见 `docs/` 下的实验记录。
