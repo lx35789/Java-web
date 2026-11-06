@@ -58,6 +58,30 @@
           <span>首次使用？直接点「登录」，会自动为你创建账号</span>
         </div>
 
+        <!--
+          连不上后端时的常驻提示（不是一闪而过的 toast）。
+          只弹 toast 的问题：6 秒后消失，用户面对一个点不动的登录按钮
+          和一个看不见的入口，只知道「登录不进去」却无路可走。
+        -->
+        <el-alert
+          v-if="serverDown"
+          type="error"
+          :closable="false"
+          show-icon
+          class="server-down"
+        >
+          <template #title>
+            <span class="gt-text-small">
+              连不上服务器：<code>{{ apiBaseLabel }}</code><br />
+              请确认手机与电脑在同一网络，或点下方按钮修改地址。
+            </span>
+          </template>
+          <div class="server-down-actions">
+            <el-button size="small" type="primary" @click="openServerDialog">修改服务器地址</el-button>
+            <el-button size="small" :loading="rechecking" @click="onRecheck">重试连接</el-button>
+          </div>
+        </el-alert>
+
         <!-- 服务器设置入口：移动端 App 里后端地址可运行时修改，
              避免内网穿透域名变化后必须重新打包 -->
         <div class="server-entry">
@@ -67,7 +91,6 @@
           </el-button>
           <span class="server-current">{{ apiBaseLabel }}</span>
         </div>
-
         <el-alert v-if="isMock" type="info" :closable="false" class="demo-tip">
           <template #title>
             <span class="gt-text-small">
@@ -147,6 +170,26 @@ const apiBaseLabel = ref(getApiBase())
 const testing = ref(false)
 /** null=未测  'ok'=通  'fail'=不通 */
 const testState = ref(null)
+/** 后端不可达时常驻提示（避免只弹一个几秒就消失的 toast） */
+const serverDown = ref(false)
+const rechecking = ref(false)
+
+async function refreshServerState() {
+  const ok = await probeApiBase(getApiBase(), 3000)
+  serverDown.value = !ok
+  return ok
+}
+
+async function onRecheck() {
+  rechecking.value = true
+  try {
+    const ok = await refreshServerState()
+    if (ok) ElMessage.success('已连上服务器')
+    else ElMessage.error('仍然连不上，请检查网络或地址')
+  } finally {
+    rechecking.value = false
+  }
+}
 
 /*
  * 进入登录页先自检一次地址：
@@ -163,6 +206,7 @@ onMounted(async () => {
       duration: 6000
     })
   }
+  await refreshServerState()
 })
 
 function openServerDialog() {
@@ -214,6 +258,7 @@ async function onSubmit() {
     router.push(route.query.redirect || '/plants')
   } catch {
     /* 错误提示已在响应拦截器统一处理 */
+    serverDown.value = true
   }
 }
 </script>
@@ -342,6 +387,23 @@ async function onSubmit() {
   flex-direction: column;
   align-items: center;
   gap: 2px;
+}
+
+/* 连不上后端时的常驻提示 */
+.server-down {
+  margin-top: 14px;
+  text-align: left;
+}
+
+.server-down code {
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.server-down-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
 }
 
 .server-current {
