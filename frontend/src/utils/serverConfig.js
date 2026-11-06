@@ -54,7 +54,7 @@ export function setApiBase(value) {
   }
 }
 
-/** 是否是绝对地址（用于判断能否直接访问，以及日志诊断） */
+/** 是否是一个能被探测的绝对地址（用于判断能否直接访问，以及日志诊断） */
 export function isAbsoluteApiBase(base = getApiBase()) {
   return /^https?:\/\//i.test(base)
 }
