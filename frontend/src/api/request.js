@@ -76,13 +76,15 @@ async function dispatch(config) {
       // 只有「后端没这个接口」才回退；401/403/500/网络错误照常抛出，
       // 否则真实故障会被 Mock 掩盖，联调时反而更难查。
       if (err && err.response && err.response.status === 404) {
-        MISSING_PATHS.add(missingKeyOf(config))
+        const key = missingKeyOf(config)
+        MISSING_PATHS.add(key)
         // eslint-disable-next-line no-console
         console.info(
-          '[植语助手] 后端未实现（已记住，后续直接走 Mock）：',
+          '[植语助手] 后端未实现（已记住，本次会话内直接走 Mock）：',
           String(config.method || 'get').toUpperCase(),
           config.url
         )
+        scheduleMissingRetry(key)
         return mockAdapter(config)
       }
       throw err
@@ -90,6 +92,25 @@ async function dispatch(config) {
   }
 
   return realAdapter(config)
+}
+
+/**
+ * 负缓存自愈：一段时间后允许重新探测一次真实后端。
+ *
+ * 为什么需要：MISSING_PATHS 是模块级 Set，页面不重载就一直存活。
+ * 后端刚把接口补上时，前端仍然走 Mock 或返回空，**而且不报错**——
+ * 排查时极其难受（实测：养护计划接口已实现，页面却一直显示「还没有养护计划」，
+ * 日历显示「待完成 0」，只有硬刷新才正常）。
+ *
+ * 这里给每条负缓存加一个 TTL，到点自动移除，下次请求重新探真实后端。
+ * 只影响 hybrid 模式的开发体验，不影响生产（生产不用 hybrid）。
+ */
+const MISSING_TTL_MS = 15 * 1000
+
+function scheduleMissingRetry(key) {
+  setTimeout(() => {
+    MISSING_PATHS.delete(key)
+  }, MISSING_TTL_MS)
 }
 
 service.defaults.adapter = async (config) => {
