@@ -24,7 +24,7 @@ export const MENU_GROUPS = [
     title: '养护',
     items: [
       // 日历 / 计划 / 日志 三个页面合并为一个入口，页内用 Tab 切换
-      { path: '/care', title: '养护中心', icon: 'Calendar' }
+      { path: '/care/calendar', title: '养护中心', icon: 'Calendar' }
     ]
   },
   {

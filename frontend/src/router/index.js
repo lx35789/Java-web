@@ -81,17 +81,40 @@ const routes = [
       // 第七周：AI 问答从前端移除（问答能力已并入诊断第 2 步的养护建议）
       { path: 'qa', redirect: '/diagnose' },
 
-      /* --- 养护：三个页面合并为一个「养护中心」，页内 Tab 切换 --- */
+      /* --- 养护：三个独立路由，顶部导航切换 ---
+             不能用页内 Tab：那样浏览器后退/移动端返回键会直接退出养护模块，
+             也没法把「养护计划」单独收藏或分享。 */
       {
         path: 'care',
-        name: 'CareCenter',
-        component: () => import('@/views/care/index.vue'),
-        meta: { title: '养护中心' }
+        redirect: '/care/calendar'
       },
-      // 兼容旧链接与外部跳转
-      { path: 'care/calendar', redirect: { path: '/care', query: { tab: 'calendar' } } },
-      { path: 'care/plans', redirect: { path: '/care', query: { tab: 'plans' } } },
-      { path: 'care/logs', redirect: { path: '/care', query: { tab: 'logs' } } },
+      {
+        path: 'care/calendar',
+        name: 'CareCalendar',
+        component: () => import('@/views/care/calendar.vue'),
+        meta: { title: '养护日历' }
+      },
+      {
+        path: 'care/plans',
+        name: 'CarePlans',
+        component: () => import('@/views/care/plans.vue'),
+        meta: { title: '养护计划' }
+      },
+      {
+        path: 'care/logs',
+        name: 'CareLogs',
+        component: () => import('@/views/care/logs.vue'),
+        meta: { title: '养护日志' }
+      },
+      // 旧链接 /care?tab=xxx 兼容，重定向到新路由
+      {
+        path: 'care/index',
+        redirect: (to) => {
+          const t = to.query.tab
+          const map = { calendar: '/care/calendar', plans: '/care/plans', logs: '/care/logs' }
+          return map[t] || '/care/calendar'
+        }
+      },
 
       /* --- 我的 --- */
       {

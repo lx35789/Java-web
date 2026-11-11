@@ -1,4 +1,6 @@
 <template>
+  <CareNav />
+
   <PageHeader title="养护日志" desc="浇水、施肥、换盆、修剪的完整记录">
     <template #actions>
       <el-button type="primary" :icon="Plus" @click="openAdd">补录一条</el-button>
@@ -135,6 +137,7 @@ import { getCareLogs, createCareLog, deleteCareLog } from '@/api/careLog'
 import { formatDateTime } from '@/utils/format'
 import { LOG_TYPES, DEFAULT_PAGE_SIZE } from '@/utils/constants'
 import dayjs from 'dayjs'
+import CareNav from '@/components/CareNav.vue'
 
 const loading = ref(false)
 const saving = ref(false)

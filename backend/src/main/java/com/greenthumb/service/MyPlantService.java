@@ -4,8 +4,18 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.greenthumb.common.BizException;
 import com.greenthumb.common.ErrorCode;
 import com.greenthumb.dto.CreatePlantRequest;
+import com.greenthumb.entity.CareLogEntity;
+import com.greenthumb.entity.CarePlanEntity;
+import com.greenthumb.entity.CareTaskEntity;
+import com.greenthumb.entity.DiseaseRecordEntity;
+import com.greenthumb.entity.PlantPhotoEntity;
 import com.greenthumb.entity.PlantSpeciesEntity;
 import com.greenthumb.entity.UserPlantEntity;
+import com.greenthumb.mapper.CareLogMapper;
+import com.greenthumb.mapper.CarePlanMapper;
+import com.greenthumb.mapper.CareTaskMapper;
+import com.greenthumb.mapper.DiseaseRecordMapper;
+import com.greenthumb.mapper.PlantPhotoMapper;
 import com.greenthumb.mapper.PlantSpeciesMapper;
 import com.greenthumb.mapper.UserPlantMapper;
 import com.greenthumb.vo.MyPlantDetailVO;
@@ -39,13 +49,30 @@ public class MyPlantService {
 
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd");
     private static final DateTimeFormatter ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+    private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final UserPlantMapper userPlantMapper;
     private final PlantSpeciesMapper plantSpeciesMapper;
+    private final CarePlanMapper carePlanMapper;
+    private final CareLogMapper careLogMapper;
+    private final CareTaskMapper careTaskMapper;
+    private final PlantPhotoMapper plantPhotoMapper;
+    private final DiseaseRecordMapper diseaseRecordMapper;
 
-    public MyPlantService(UserPlantMapper userPlantMapper, PlantSpeciesMapper plantSpeciesMapper) {
+    public MyPlantService(UserPlantMapper userPlantMapper,
+                          PlantSpeciesMapper plantSpeciesMapper,
+                          CarePlanMapper carePlanMapper,
+                          CareLogMapper careLogMapper,
+                          CareTaskMapper careTaskMapper,
+                          PlantPhotoMapper plantPhotoMapper,
+                          DiseaseRecordMapper diseaseRecordMapper) {
         this.userPlantMapper = userPlantMapper;
         this.plantSpeciesMapper = plantSpeciesMapper;
+        this.carePlanMapper = carePlanMapper;
+        this.careLogMapper = careLogMapper;
+        this.careTaskMapper = careTaskMapper;
+        this.plantPhotoMapper = plantPhotoMapper;
+        this.diseaseRecordMapper = diseaseRecordMapper;
     }
 
     /* ================= 列表 ================= */
@@ -68,10 +95,155 @@ public class MyPlantService {
 
     /* ================= 详情 ================= */
 
+    /**
+     * 详情：基本信息 + 养护计划 + 最近养护记录 + 最近诊断。
+     *
+     * <p>前端 plants/detail.vue 直接渲染 carePlans / recentLogs / recentDiagnoses，
+     * 早期实现这三项固定传空列表，导致详情页永远显示「还没有」「没有任何记录」。
+     */
     public MyPlantDetailVO detail(Long userId, Long plantId) {
         UserPlantEntity plant = getOwned(userId, plantId);
         PlantSpeciesEntity species = speciesOf(plant.getSpeciesId());
-        return MyPlantDetailVO.from(toVO(plant, species));
+        MyPlantVO base = toVO(plant, species);
+
+        // 计划：详情页要展示「为什么是 N 天」，所以必须给全字段（含系数明细），
+        // 不能只给 id/planType/间隔 —— 否则 CarePlanExplain 渲染成「— 天」。
+        List<Object> plans = carePlanMapper.selectList(new LambdaQueryWrapper<CarePlanEntity>()
+                        .eq(CarePlanEntity::getUserId, userId)
+                        .eq(CarePlanEntity::getUserPlantId, plantId)
+                        .eq(CarePlanEntity::getIsActive, 1)
+                        .orderByAsc(CarePlanEntity::getPlanType))
+                .stream().map(p -> {
+                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("id", p.getId());
+                    m.put("userPlantId", p.getUserPlantId());
+                    m.put("planType", p.getPlanType());
+                    m.put("season", p.getSeason());
+                    m.put("baseIntervalDays", p.getBaseIntervalDays());
+                    m.put("effectiveIntervalDays", p.getEffectiveIntervalDays());
+                    m.put("coefficientDetail", parseJsonOrNull(p.getCoefficientDetail()));
+                    m.put("llmExplain", p.getLlmExplain());
+                    m.put("isActive", p.getIsActive() != null && p.getIsActive() == 1);
+                    m.put("generatedBy", p.getGeneratedBy());
+                    m.put("nextDueDate", nextDueOf(userId, p.getId()));
+                    return (Object) m;
+                })
+                .toList();
+
+        // 最近 5 条养护记录
+        List<Object> logs = careLogMapper.selectList(new LambdaQueryWrapper<CareLogEntity>()
+                        .eq(CareLogEntity::getUserId, userId)
+                        .eq(CareLogEntity::getUserPlantId, plantId)
+                        .orderByDesc(CareLogEntity::getLoggedAt)
+                        .last("limit 5"))
+                .stream().map(l -> (Object) java.util.Map.of(
+                        "id", l.getId(),
+                        "logType", l.getLogType(),
+                        "amount", l.getAmount() == null ? "" : l.getAmount(),
+                        "unit", l.getUnit() == null ? "" : l.getUnit(),
+                        "detail", l.getDetail() == null ? "" : l.getDetail(),
+                        "loggedAt", l.getLoggedAt() == null ? "" : l.getLoggedAt().format(DATE_TIME)))
+                .toList();
+
+        // 最近 5 条诊断
+        List<Object> diagnoses = diseaseRecordMapper.selectList(
+                        new LambdaQueryWrapper<DiseaseRecordEntity>()
+                                .eq(DiseaseRecordEntity::getUserId, userId)
+                                .orderByDesc(DiseaseRecordEntity::getCreatedAt)
+                                .last("limit 5"))
+                .stream().map(d -> (Object) java.util.Map.of(
+                        "id", d.getId(),
+                        "diagnosisType", d.getDiagnosisType(),
+                        "predictedCode", d.getPredictedCode() == null ? "" : d.getPredictedCode(),
+                        "confidence", d.getConfidence() == null ? 0 : d.getConfidence(),
+                        "status", d.getStatus() == null ? "" : d.getStatus(),
+                        "createdAt", d.getCreatedAt() == null ? "" : d.getCreatedAt().format(DATE_TIME)))
+                .toList();
+
+        return new MyPlantDetailVO(
+                base.id(), base.speciesId(), base.speciesName(), base.speciesEmoji(),
+                base.nickname(), base.location(), base.lightLevel(),
+                base.potSize(), base.potMaterial(), base.soilType(),
+                base.acquiredDate(), base.healthStatus(), base.addSource(), base.note(),
+                base.createdAt(), lastWateredAt(userId, plantId), nextWaterDue(userId, plantId),
+                plans, logs, diagnoses);
+    }
+
+    /** 解析系数 JSON 字符串为对象，让前端拿到的是对象而不是字符串 */
+    private Object parseJsonOrNull(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().readValue(json, Object.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 某计划下一次到期日（最早一条 PENDING 任务） */
+    private String nextDueOf(Long userId, Long planId) {
+        CareTaskEntity t = careTaskMapper.selectOne(new LambdaQueryWrapper<CareTaskEntity>()
+                .eq(CareTaskEntity::getPlanId, planId)
+                .eq(CareTaskEntity::getStatus, "PENDING")
+                .orderByAsc(CareTaskEntity::getDueDate)
+                .last("limit 1"));
+        return t == null || t.getDueDate() == null ? null : t.getDueDate().format(DATE);
+    }
+
+    /** 最近一次浇水时间（从养护记录推，不冗余存字段） */
+    private String lastWateredAt(Long userId, Long plantId) {
+        CareLogEntity l = careLogMapper.selectOne(new LambdaQueryWrapper<CareLogEntity>()
+                .eq(CareLogEntity::getUserId, userId)
+                .eq(CareLogEntity::getUserPlantId, plantId)
+                .eq(CareLogEntity::getLogType, "WATER")
+                .orderByDesc(CareLogEntity::getLoggedAt)
+                .last("limit 1"));
+        return l == null || l.getLoggedAt() == null ? null : l.getLoggedAt().format(DATE_TIME);
+    }
+
+    /** 下一次浇水到期日（取最早一条未完成 WATER 任务） */
+    private String nextWaterDue(Long userId, Long plantId) {
+        CareTaskEntity t = careTaskMapper.selectOne(new LambdaQueryWrapper<CareTaskEntity>()
+                .eq(CareTaskEntity::getUserId, userId)
+                .eq(CareTaskEntity::getUserPlantId, plantId)
+                .eq(CareTaskEntity::getTaskType, "WATER")
+                .eq(CareTaskEntity::getStatus, "PENDING")
+                .orderByAsc(CareTaskEntity::getDueDate)
+                .last("limit 1"));
+        return t == null || t.getDueDate() == null ? null : t.getDueDate().format(DATE);
+    }
+
+    /**
+     * 成长时间线：把「拍过的照片」按时间倒序返回。
+     *
+     * <p>结构对齐 frontend（mock 版）：{ userPlantId, photos: [{id, date, emoji, note}] }。
+     * 前端只读 photos，别的字段不要乱加。
+     *
+     * <p>数据来源是 plant_photo（拍照记录），不是 plant_observation ——
+     * 后者是叶面积/健康分的计算产物，目前还没有稳定写入，拿它做时间线会空。
+     */
+    public java.util.Map<String, Object> timeline(Long userId, Long plantId) {
+        getOwned(userId, plantId);   // 校验归属
+
+        List<PlantPhotoEntity> photos = plantPhotoMapper.selectList(
+                new LambdaQueryWrapper<PlantPhotoEntity>()
+                        .eq(PlantPhotoEntity::getUserPlantId, plantId)
+                        .orderByDesc(PlantPhotoEntity::getCreatedAt)
+                        .last("limit 50"));
+
+        List<java.util.Map<String, Object>> items = photos.stream().map(p -> {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("id", p.getId());
+            m.put("date", p.getCreatedAt() == null ? "" : p.getCreatedAt().format(DATE));
+            m.put("emoji", "\uD83D\uDCF7");
+            m.put("note", p.getPhotoType() == null ? "拍照记录" : "拍照记录 · " + p.getPhotoType());
+            m.put("url", p.getUrl());
+            return m;
+        }).toList();
+
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("userPlantId", plantId);
+        out.put("photos", items);
+        return out;
     }
 
     /* ================= 新增 ================= */

@@ -1,4 +1,6 @@
 <template>
+  <CareNav />
+
   <PageHeader title="养护日历" desc="到期提醒一目了然，完成后自动记入养护日志">
     <template #actions>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
@@ -98,6 +100,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { getCareCalendar, completeTask } from '@/api/careTask'
 import { PLAN_TYPES, TASK_STATUS } from '@/utils/constants'
+import CareNav from '@/components/CareNav.vue'
 
 const loading = ref(false)
 const calendarDate = ref(new Date())

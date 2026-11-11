@@ -1,4 +1,6 @@
 <template>
+  <CareNav />
+
   <PageHeader title="养护计划" desc="每个数字都能追溯到来源：种类基准 × 季节 × 光照 × 温度 × 湿度 × 花盆">
     <template #actions>
       <el-button :icon="Refresh" :loading="loading" @click="load">刷新</el-button>
@@ -51,6 +53,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import { getMyPlants } from '@/api/myPlant'
 import { getCarePlans, generateCarePlans } from '@/api/carePlan'
 import { PLAN_TYPES } from '@/utils/constants'
+import CareNav from '@/components/CareNav.vue'
 
 const router = useRouter()
 const loading = ref(false)

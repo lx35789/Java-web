@@ -54,6 +54,17 @@ public class MyPlantController {
         return ApiResponse.ok(myPlantService.detail(CurrentUser.id(), id));
     }
 
+    /**
+     * 成长时间线（拍过的照片倒序）。
+     *
+     * <p>同样把路径变量限制为数字，否则 /my-plants/natural-language
+     * 会被当成 id 匹配到 /{id} 或本路径上。
+     */
+    @GetMapping("/{id:\\d+}/timeline")
+    public ApiResponse<java.util.Map<String, Object>> timeline(@PathVariable("id") Long id) {
+        return ApiResponse.ok(myPlantService.timeline(CurrentUser.id(), id));
+    }
+
     @PostMapping
     public ApiResponse<MyPlantVO> create(@RequestBody CreatePlantRequest request) {
         return ApiResponse.ok(myPlantService.create(CurrentUser.id(), request));
