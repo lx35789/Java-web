@@ -9,7 +9,7 @@
       </div>
       <div v-else class="placeholder">
         <el-icon :size="34" class="ph-icon"><Camera /></el-icon>
-        <div class="ph-title">点击拍照</div>
+        <div class="ph-title">拍照</div>
         <div class="ph-desc">{{ hint }}</div>
       </div>
       <div v-if="previewUrl" class="mask">{{ processing ? '正在压缩…' : '点击重拍' }}</div>

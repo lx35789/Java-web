@@ -128,10 +128,11 @@ export const DIAGNOSIS_TYPE = {
 }
 
 export const DISEASE_CATEGORY = {
-  FUNGAL: { label: '真菌性', color: '#B88230' },
-  BACTERIAL: { label: '细菌性', color: '#F56C6C' },
-  PEST: { label: '虫害', color: '#E6A23C' },
-  PHYSIOLOGICAL: { label: '生理性', color: '#909399' }
+  FUNGAL: { label: '真菌性', color: '#8A5A00' },
+  BACTERIAL: { label: '细菌性', color: '#C62828' },
+  PEST: { label: '虫害', color: '#B26A00' },
+  // 生理性原来用 #909399（浅灰），在结果卡里几乎看不见；改为深镔灰
+  PHYSIOLOGICAL: { label: '生理性', color: '#5A5F66' }
 }
 
 export const DIAGNOSIS_STATUS = {

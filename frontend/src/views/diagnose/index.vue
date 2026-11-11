@@ -176,24 +176,21 @@
               <!-- 识别结果 -->
               <template v-else>
                 <div class="disease-main">
+                  <div class="disease-label">识别结果</div>
                   <div class="disease-head">
                     <span class="disease-name">{{ disease.predicted.nameCn }}</span>
-                    <el-tag
-                      size="small"
-                      effect="plain"
-                      :style="{ color: diseaseCategory.color, borderColor: diseaseCategory.color }"
-                    >
-                      {{ diseaseCategory.label }}
-                    </el-tag>
                     <ConfidenceTag :confidence="disease.predicted.confidence" />
                     <el-tag v-if="disease.predicted.severity === 'HIGH'" type="danger" size="small">
                       严重
                     </el-tag>
                   </div>
+                  <div class="disease-cat" :style="{ color: diseaseCategory.color }">
+                    {{ diseaseCategory.label }}
+                  </div>
                 </div>
 
                 <div v-if="disease.topK && disease.topK.length > 1" class="topk">
-                  <div class="gt-text-secondary gt-text-small gt-mb-8">其他可能</div>
+                  <div class="topk-title">其他可能</div>
                   <div v-for="k in disease.topK.slice(1)" :key="k.code" class="topk-row">
                     <span class="topk-name">{{ k.nameCn }}</span>
                     <el-progress
@@ -821,10 +818,19 @@ onMounted(async () => {
 }
 
 .disease-main {
-  padding: 14px;
-  border: 1px solid var(--gt-danger);
+  padding: 18px 18px 16px;
+  border: 2px solid var(--gt-danger);
   border-radius: var(--gt-radius);
-  background: #fffafa;
+  background: #fff6f5;
+}
+
+/* 结果小标题：让用户一眼知道这是最终结论，不是中间数据 */
+.disease-label {
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: var(--gt-danger);
+  font-weight: 600;
+  margin-bottom: 8px;
 }
 
 .disease-head {
@@ -834,25 +840,47 @@ onMounted(async () => {
   flex-wrap: wrap;
 }
 
+/*
+ * 病名是整页最重要的信息，必须一眼看到。
+ * 原来 18px，移动端在强光/护眼模式下偏淡，现提到 24px 并加重颜色。
+ */
 .disease-name {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 24px;
+  line-height: 1.35;
+  font-weight: 800;
+  color: #b3261e;
+  letter-spacing: 0.5px;
+}
+
+/* 病害类别（真菌/细菌/虫害…）保留物种色，但放大到可读 */
+.disease-cat {
+  margin-top: 8px;
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .topk {
-  margin-top: 16px;
+  margin-top: 18px;
+}
+
+.topk-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gt-text-regular);
+  margin-bottom: 8px;
 }
 
 .topk-row {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
-  padding: 3px 0;
+  font-size: 14px;
+  padding: 5px 0;
+  color: var(--gt-text-regular);
 }
 
 .topk-name {
-  width: 120px;
+  width: 130px;
   flex: 0 0 auto;
 }
 
@@ -863,20 +891,37 @@ onMounted(async () => {
 .topk-val {
   width: 48px;
   text-align: right;
-  color: var(--gt-text-secondary);
+  color: var(--gt-text-regular);
   font-variant-numeric: tabular-nums;
 }
 
 .section-block {
-  margin-top: 18px;
+  margin-top: 20px;
 }
 
+/* 「处理建议」「预防」小标题：14px 加粗并加一条左侧色条，与正文区分开 */
+.section-block :deep(.gt-explain-title) {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gt-primary-dark);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 9px;
+  border-left: 3px solid var(--gt-primary);
+  margin-bottom: 10px;
+}
+
+/*
+ * 处置/预防正文：原来 13px + 次要文字色，在手机上又小又淡。
+ * 现在是用户真正要照着做的东西，提到 15px 并用正文主色。
+ */
 .treatment {
-  font-size: 13px;
-  line-height: 1.95;
-  color: var(--gt-text-regular);
+  font-size: 15px;
+  line-height: 1.9;
+  color: var(--gt-text-primary);
   white-space: pre-line;
-  margin-top: 6px;
+  margin-top: 8px;
 }
 
 .branch-box {
@@ -952,7 +997,9 @@ onMounted(async () => {
 }
 
 .sum-value {
-  font-size: 14px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--gt-text-primary);
   display: flex;
   align-items: center;
   gap: 6px;
