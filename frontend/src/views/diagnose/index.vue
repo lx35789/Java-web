@@ -447,6 +447,7 @@ import ConfidenceTag from '@/components/ConfidenceTag.vue'
 import { uploadPhoto } from '@/api/photo'
 import { recognizeSpecies } from '@/api/recognition'
 import { diagnoseDisease, diagnoseSymptom } from '@/api/diagnosis'
+import { getModelStatus } from '@/api/diagnosis'
 import { getSpeciesDetail } from '@/api/species'
 import { getMyPlants } from '@/api/myPlant'
 
@@ -499,11 +500,25 @@ const providerLabel = computed(
 /** 该物种是否有病害识别数据；未识别物种时允许尝试。
  *  用「包含」而不是精确相等：百度经常返回「月季花」「绿萝（黄金葛）」这类带后缀的名字，
  *  精确匹配会把覆盖范围内的物种误判成"无数据"，直接跳过错失整个第 2 步。 */
+/**
+ * 当前模型实际覆盖哪些物种 —— 优先用后端返回的清单。
+ *
+ * 这里有段血泪史：曾经把这份清单硬编码在 constants.js（DISEASE_COVERED_SPECIES），
+ * 模型从 6 物种扩到 9 物种（加了仙人掌/虎皮兰/吊兰）后忘了同步，
+ * 结果界面直接显示「暂无病害识别数据」并跳过，压根不调接口，
+ * 用户以为「模型没部署上线」。
+ *
+ * 现在 coveredSpecies 来自 /diagnoses/model-status，由 AI 服务的 labels.json 反推，
+ * 换模型后下一次请求自动生效。DISEASE_COVERED_SPECIES 只作为拿不到数据时的兜底。
+ */
+const coveredSpecies = ref([...DISEASE_COVERED_SPECIES])
+
 const diseaseCovered = computed(() => {
   if (!species.value) return true
   const name = species.value.commonName || ''
   if (!name) return true
-  return DISEASE_COVERED_SPECIES.some((s) => name.includes(s) || s.includes(name))
+  const list = coveredSpecies.value.length ? coveredSpecies.value : DISEASE_COVERED_SPECIES
+  return list.some((s) => name.includes(s) || s.includes(name))
 })
 
 const diseaseCategory = computed(
@@ -696,6 +711,17 @@ function finish() {
 }
 
 onMounted(async () => {
+  // 先拉模型实际覆盖的物种：拿不到就保留内置兜底清单，不影响主流程
+  getModelStatus()
+    .then((st) => {
+      if (st && Array.isArray(st.coveredSpecies) && st.coveredSpecies.length) {
+        coveredSpecies.value = st.coveredSpecies
+      }
+    })
+    .catch(() => {
+      /* 接口不可用时用 DISEASE_COVERED_SPECIES 兜底 */
+    })
+
   plants.value = (await getMyPlants()) || []
 
   // 从「我的植物」详情页点「诊断」进来时，预选那盆植物

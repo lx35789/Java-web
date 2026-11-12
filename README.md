@@ -119,6 +119,23 @@ ai-service/models/
 
 模型缺失时服务**不会崩溃**，`/health` 返回 `available: false`，前端提示"识别暂不可用"。
 
+### ★ 部署后必须跑自检
+
+```bash
+python ai-service/train/verify_deploy.py --token <登录token>
+```
+
+它会核对四处是否一致：**模型文件 / AI 服务加载的类数 / 后端 coveredSpecies / SpeciesKeys 映射**，
+不一致就返回非 0 退出码。
+
+为什么要有这一步：曾经模型从 6 物种扩到 9 物种，AI、后端、数据库都更新了，
+但前端留着一份硬编码的"支持物种"清单没改，结果仙人掌/虎皮兰/吊兰在界面上
+直接显示"暂无病害识别数据"并跳过，**不报任何错**——用户以为模型没上线。
+这类问题每一处单独看都是对的，只有串起来核对才能发现。
+
+**前端已改成从 `/diagnoses/model-status` 读 `coveredSpecies`**（由模型 labels 反推），
+`DISEASE_COVERED_SPECIES` 只作为接口不可达时的兜底，换模型不会再漂移。
+
 ---
 
 ## 三、目录结构

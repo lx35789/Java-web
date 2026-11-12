@@ -443,6 +443,17 @@ class ClassifierRegistry:
     def labels(self) -> Dict[str, Any]:
         return self.general.labels
 
+    @property
+    def species_set(self) -> List[str]:
+        """通用模型覆盖的物种清单（英文 key）。
+
+        对外暴露是必要的：前端曾把「支持哪些物种」硬编码成 6 种，
+        模型扩到 9 种后没同步，仙人掌/虎皮兰/吊兰在界面上直接显示
+        「暂无病害识别数据」并跳过，压根不调接口 —— 用户侧表现就是
+        「放了仙人掌照片不识别病害」。
+        """
+        return self.general.species_set
+
     # ------------------------------------------------------------------
     def pick(self, species: Optional[str]) -> DiseaseClassifier:
         """按物种选模型。没有专用模型就退回通用模型。"""

@@ -36,6 +36,29 @@ public final class SpeciesKeys {
     }
 
     /**
+     * 反向查询：模型 species key → 中文名。
+     *
+     * <p>AI 服务返回的是 labels.json 里的写法（"Money Plant"，带空格），
+     * 而本类的 key 用下划线（Money_Plant），必须归一后再查，
+     * 否则绿萝/虎皮兰/吊兰会查不到、从「已覆盖」名单里消失。
+     *
+     * @param speciesKey AI 服务返回的物种 key
+     * @return 中文名；查不到返回 null
+     */
+    public static String commonNameOf(String speciesKey) {
+        if (speciesKey == null || speciesKey.isBlank()) {
+            return null;
+        }
+        String norm = speciesKey.trim().replace(' ', '_');
+        for (Map.Entry<String, String> e : PREFIX.entrySet()) {
+            if (e.getValue().equalsIgnoreCase(norm)) {
+                return e.getKey();
+            }
+        }
+        return null;
+    }
+
+    /**
      * 按中文名查模型 species key；查不到返回 null（调用方应回退通用模型）。
      *
      * @param commonName 植物库里的中文名，如「芦荟」

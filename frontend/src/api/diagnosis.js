@@ -20,3 +20,12 @@ export const diagnoseSymptom = (data) => request.post('/diagnoses/symptom', data
 export const getDiagnoses = (params) => request.get('/diagnoses', { params })
 export const getDiagnosisDetail = (id) => request.get(`/diagnoses/${id}`)
 export const updateDiagnosisStatus = (id, status) => request.put(`/diagnoses/${id}/status`, { status })
+
+/**
+ * 模型状态 + 实际覆盖的物种。
+ *
+ * coveredSpecies 是判断「这盆植物能不能做病害识别」的唯一依据 ——
+ * 以前前端用硬编码清单，模型扩容后没同步，新物种被直接跳过。
+ * 现在由后端从模型 labels 反推，模型换了立刻生效。
+ */
+export const getModelStatus = () => request.get('/diagnoses/model-status')

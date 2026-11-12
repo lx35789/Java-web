@@ -196,7 +196,21 @@ export const CAUSE_CATEGORIES = {
 // 当前模型训练自 indoor-plant-disease-dataset（6 物种 29 类）。
 // 改了模型一定要同步改这里，否则会两个方向都出错：
 //   模型认识的被当成"暂无数据"跳过；模型不认识的反而硬跑出错误结论。
-export const DISEASE_COVERED_SPECIES = ['绿萝', '芦荟', '月季', '姜黄', '扶桑', '菊花']
+/**
+ * 兜底用的「模型覆盖物种」清单。
+ *
+ * ⚠️ 真正的来源是后端 /diagnoses/model-status 的 coveredSpecies，
+ * 它从 AI 模型的 labels.json 反推，换模型自动同步。
+ * 这份常量只在接口不可达时兜底用。
+ *
+ * 教训：以前这里是唯一来源，模型从 6 物种扩到 9 物种（加仙人掌/虎皮兰/吊兰）
+ * 后忘了同步，界面直接跳过这些物种的病害识别，被误认为「模型没上线」。
+ * 改这个列表时必须同时确认 AI 模型真的支持。
+ */
+export const DISEASE_COVERED_SPECIES = [
+  '绿萝', '芦荟', '月季', '姜黄', '扶桑', '菊花',
+  '仙人掌', '虎皮兰', '虎尾兰', '吊兰'
+]
 
 export const URGENCY = {
   LOW: { label: '不急', type: 'info' },

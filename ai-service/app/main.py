@@ -35,6 +35,12 @@ def health() -> dict:
             "reason": classifier.reason,
             "numClasses": classifier.num_classes,
             "meta": classifier.meta,
+            # 实际覆盖的物种（英文 key，如 Cactus / Snake_Plant）。
+            # 暴露出来的原因：前端曾把「支持哪些物种」硬编码成 6 种，
+            # 模型扩到 9 种后没同步，导致仙人掌/虎皮兰/吊兰在界面上直接
+            # 显示「暂无病害识别数据」并跳过，压根不调接口。
+            # 让前端从模型本身读清单，就不会再漂移。
+            "species": classifier.species_set,
         },
         # 物种专用模型清单：有专用模型的物种会走专用模型，准确率更高
         "specialized": classifier.describe()["specialized"],

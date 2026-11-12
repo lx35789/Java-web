@@ -20,7 +20,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -78,6 +80,17 @@ public class DiagnosisController {
         return ApiResponse.ok(diagnosisService.list(CurrentUser.id(), diagnosisType, page, size));
     }
 
+    /**
+     * 模型状态 + **实际覆盖的物种**。
+     *
+     * <p>coveredSpecies 是从 AI 模型的 labels.json 反推出来的中文名，
+     * 是「哪些植物能做病害识别」的唯一真相。
+     *
+     * <p>以前前端自己维护一份硬编码清单（只有 6 种），模型扩到 9 种后没同步，
+     * 结果仙人掌/虎皮兰/吊兰在界面上直接显示「暂无病害识别数据」并跳过，
+     * 压根不会调病害接口 —— 用户侧表现就是「放了仙人掌照片不识别病害」。
+     * 现在改成前端从这里读，模型换了下一次请求就同步。
+     */
     @GetMapping("/model-status")
     public ApiResponse<Map<String, Object>> modelStatus() {
         AiClientService.Health h = aiClient.health();
@@ -85,6 +98,15 @@ public class DiagnosisController {
         data.put("available", h.available());
         data.put("reason", h.reason());
         data.put("numClasses", h.numClasses());
+
+        List<String> cn = new ArrayList<>();
+        for (String key : h.species()) {
+            String name = com.greenthumb.common.SpeciesKeys.commonNameOf(key);
+            if (name != null) {
+                cn.add(name);
+            }
+        }
+        data.put("coveredSpecies", cn);
         return ApiResponse.ok(data);
     }
 

@@ -45,6 +45,8 @@ public class AiClientService {
     private volatile boolean modelAvailable = false;
     private volatile String modelReason = "尚未探测";
     private volatile int numClasses = 0;
+    /** 模型实际覆盖的物种 key（来自 AI 服务 /health 的 diseaseModel.species） */
+    private volatile List<String> modelSpecies = List.of();
 
     public AiClientService(@Value("${greenthumb.ai-service.base-url:http://localhost:8000}") String baseUrl,
                            @Value("${greenthumb.ai-service.timeout-ms:6000}") long timeoutMs,
@@ -64,7 +66,19 @@ public class AiClientService {
 
     /* ==================== 对外 ==================== */
 
-    public record Health(boolean available, String reason, int numClasses) {
+    /**
+     * 模型健康状况。
+     *
+     * @param species 模型实际覆盖的物种 key（AI 服务从 labels.json 推出）。
+     *                前端用它决定「该物种能不能做病害识别」——
+     *                以前前端自己硬编码了一份，模型扩容后没同步，
+     *                导致新物种在界面上被直接跳过。
+     */
+    public record Health(boolean available, String reason, int numClasses, List<String> species) {
+        /** 兼容旧调用 */
+        public Health(boolean available, String reason, int numClasses) {
+            this(available, reason, numClasses, List.of());
+        }
     }
 
     public record Item(String code, String nameCn, String species, String disease, double confidence) {
@@ -86,7 +100,7 @@ public class AiClientService {
     public Health health() {
         long now = System.currentTimeMillis();
         if (now - lastHealthCheck < HEALTH_CACHE_MS) {
-            return new Health(modelAvailable, modelReason, numClasses);
+            return new Health(modelAvailable, modelReason, numClasses, modelSpecies);
         }
         try {
             HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + "/health"))
@@ -98,6 +112,17 @@ public class AiClientService {
             modelReason = dm.path("reason").isMissingNode() || dm.path("reason").isNull()
                     ? null : dm.path("reason").asText();
             numClasses = dm.path("numClasses").asInt(0);
+            // species 由 AI 服务从 labels.json 推出，是「模型实际支持哪些物种」的唯一真相。
+            // 拿不到就置空列表，前端会退回内置兜底清单（而不是当成"一个都不支持"）。
+            List<String> sp = new ArrayList<>();
+            JsonNode spNode = dm.path("species");
+            if (spNode.isArray()) {
+                for (JsonNode n : spNode) {
+                    String v = n.asText("");
+                    if (!v.isBlank()) sp.add(v);
+                }
+            }
+            modelSpecies = sp;
             if (!modelAvailable) {
                 log.warn("AI 模型未就绪：{}", modelReason);
             }
@@ -106,7 +131,7 @@ public class AiClientService {
             modelReason = "AI 服务不可达（" + baseUrl + "）：" + rootMessage(e);
         }
         lastHealthCheck = now;
-        return new Health(modelAvailable, modelReason, numClasses);
+        return new Health(modelAvailable, modelReason, numClasses, modelSpecies);
     }
 
     /**
