@@ -108,7 +108,14 @@ python ai-service/train/export_to_service.py \
 > `--group-split 1` 不是可选项：数据里同一张原图可能被增广成多份，
 > 按文件随机切分会让副本跨训练/测试泄漏，准确率虚高且不报错。详见 `docs/25`。
 
-**方式 B：向项目负责人索要**已训练好的 `disease.onnx` + `labels.json` + `meta.json`，放到：
+**方式 B：从 Release 下载**（推荐）
+
+```bash
+# 37 类 / 9 物种（含仙人掌、虎皮兰、吊兰）
+https://github.com/lx35789/Java-web/releases/download/v1.1-models/greenthumb-models-v1.1.zip
+```
+
+解压后把 `models/` 整体放到 `ai-service/` 下即可，结构：
 
 ```
 ai-service/models/
@@ -118,6 +125,9 @@ ai-service/models/
 ```
 
 模型缺失时服务**不会崩溃**，`/health` 返回 `available: false`，前端提示"识别暂不可用"。
+
+> ⚠️ **不要用 `v1.0-models`**：那是 29 类 / 6 物种的旧包，缺仙人掌、虎皮兰、吊兰三类
+> 共 8 个病害类别，用旧包时这三种植物做不了病害识别。
 
 ### ★ 部署后必须跑自检
 
