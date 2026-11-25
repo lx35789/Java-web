@@ -10,7 +10,7 @@
 
   <el-row :gutter="12">
     <!-- ==================== 会话列表 ==================== -->
-    <el-col :xs="24" :md="7">
+    <el-col :xs="24" :md="7" class="session-col">
       <div class="gt-card session-card">
         <h3 class="gt-section-title">历史对话</h3>
         <div v-if="sessions.length" class="session-list">
@@ -44,27 +44,44 @@
     <el-col :xs="24" :md="17">
       <div class="gt-card chat-card">
         <div class="chat-head">
-          <div class="gt-flex-center gt-gap-8">
+          <div class="gt-flex-center gt-gap-8 chat-head-main">
+            <!-- 手机上会话列表在抽屉里，这两个按钮只在窄屏出现 -->
+            <el-button
+              class="mobile-only chat-head-btn"
+              text
+              :icon="Clock"
+              title="历史对话"
+              @click="historyVisible = true"
+            />
             <span class="chat-title">{{ activeSession?.title || '新对话' }}</span>
             <el-tag v-if="plantDetail" size="small" effect="plain" :type="healthTagType">
               {{ healthText }}
             </el-tag>
           </div>
-          <el-select
-            v-model="userPlantId"
-            placeholder="关联我的植物"
-            clearable
-            size="small"
-            style="width: 200px"
-            @change="onPlantChange"
-          >
-            <el-option
-              v-for="p in plants"
-              :key="p.id"
-              :label="`${p.speciesEmoji || '🌿'} ${p.nickname}`"
-              :value="p.id"
+          <div class="gt-flex-center gt-gap-8">
+            <el-button
+              class="mobile-only chat-head-btn"
+              text
+              :icon="Plus"
+              title="新对话"
+              @click="newSession"
             />
-          </el-select>
+            <el-select
+              v-model="userPlantId"
+              placeholder="关联我的植物"
+              clearable
+              size="small"
+              class="plant-select"
+              @change="onPlantChange"
+            >
+              <el-option
+                v-for="p in plants"
+                :key="p.id"
+                :label="`${p.speciesEmoji || '🌿'} ${p.nickname}`"
+                :value="p.id"
+              />
+            </el-select>
+          </div>
         </div>
 
         <!-- 个性化依据：植物档案 + 诊断起点 -->
@@ -138,10 +155,10 @@
           <el-input
             v-model="input"
             type="textarea"
-            :rows="2"
+            :rows="isNarrow ? 1 : 2"
             resize="none"
             :disabled="streaming"
-            placeholder="描述你的问题，Ctrl + Enter 发送"
+            :placeholder="inputPlaceholder"
             @keydown.ctrl.enter.prevent="send()"
           />
           <el-button v-if="streaming" type="danger" plain @click="stop">停止</el-button>
@@ -150,13 +167,43 @@
       </div>
     </el-col>
   </el-row>
+
+  <!-- 手机端：历史对话从左侧抽屉出，正文才有整屏高度 -->
+  <el-drawer
+    v-model="historyVisible"
+    direction="ltr"
+    size="76%"
+    title="历史对话"
+    class="history-drawer"
+  >
+    <el-button type="primary" plain :icon="Plus" class="history-new" @click="newSession">
+      新对话
+    </el-button>
+    <div v-if="sessions.length" class="session-list">
+      <div
+        v-for="s in sessions"
+        :key="s.id"
+        class="session-item"
+        :class="{ active: s.id === activeSessionId }"
+        @click="openSession(s)"
+      >
+        <div class="session-title">{{ s.title || '新对话' }}</div>
+        <div class="session-meta">
+          {{ plantLabel(s.userPlantId) }}
+          <span v-if="plantLabel(s.userPlantId)">·</span>
+          {{ s.messageCount || 0 }} 条 · {{ s.updatedAt || '' }}
+        </div>
+      </div>
+    </div>
+    <div v-else class="gt-text-secondary gt-text-small history-empty">还没有对话</div>
+  </el-drawer>
 </template>
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Plus, Document, ChatDotRound, Lock, FirstAidKit } from '@element-plus/icons-vue'
+import { Plus, Document, ChatDotRound, Lock, FirstAidKit, Clock } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import ChatMessage from '@/components/ChatMessage.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -179,6 +226,18 @@ const plants = ref([])
 const plantDetail = ref(null)
 const activeSessionId = ref(null)
 const userPlantId = ref(null)
+/** 手机端历史会话抽屉（窄屏时左栏是隐藏的） */
+const historyVisible = ref(false)
+/** 窄屏标记：输入框提示语里的「Ctrl + Enter」在手机上没意义 */
+const narrowQuery = window.matchMedia('(max-width: 768px)')
+// 初始值同步取一次，等 onMounted 再设会让首屏按桌面配置渲染（输入框会高一行）
+const isNarrow = ref(narrowQuery.matches)
+const syncNarrow = () => {
+  isNarrow.value = narrowQuery.matches
+}
+const inputPlaceholder = computed(() =>
+  isNarrow.value ? '说说它现在的情况…' : '描述你的问题，Ctrl + Enter 发送'
+)
 const input = ref('')
 const loading = ref(false)
 const thinking = ref(false)
@@ -260,6 +319,7 @@ function plantLabel(id) {
 }
 
 async function openSession(s) {
+  historyVisible.value = false
   if (streaming.value) {
     ElMessage.warning('回答还没结束，先停止再切换')
     return
@@ -284,6 +344,7 @@ async function openSession(s) {
 }
 
 function newSession() {
+  historyVisible.value = false
   if (streaming.value) stop()
   activeSessionId.value = null
   messages.value = []
@@ -442,6 +503,8 @@ function scrollToBottom() {
 /* ==================== 生命周期 ==================== */
 
 onMounted(async () => {
+  syncNarrow()
+  narrowQuery.addEventListener('change', syncNarrow)
   plants.value = (await getMyPlants()) || []
 
   // 诊断页跳过来时带的一次性上下文
@@ -486,6 +549,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  narrowQuery.removeEventListener('change', syncNarrow)
   controller?.abort()
 })
 </script>
@@ -742,14 +806,100 @@ onBeforeUnmount(() => {
   }
 }
 
+/* 窄屏才出现的元素，桌面上不占位（必须写在下面的媒体查询之前，
+   否则同优先级下会被后面的 display:none 覆盖掉） */
+.mobile-only {
+  display: none;
+}
+.plant-select {
+  width: 200px;
+}
+
+.history-new {
+  width: 100%;
+  margin-bottom: 10px;
+}
+.history-empty {
+  padding: 12px 0;
+}
+
 @media (max-width: 768px) {
-  .session-card {
-    height: auto;
-    min-height: 0;
-    margin-bottom: 12px;
+  /* 手机上不要「半屏对话」：
+     左栏（历史会话）和页头都收起来，聊天卡片直接贴在顶栏下方铺满整屏，
+     输入框固定在底部并预留安全区，中间的消息区自己滚动。 */
+  :deep(.page-head) {
+    display: none;
+  }
+  .session-col {
+    display: none;
   }
   .chat-card {
-    height: calc(100vh - 220px);
+    position: fixed;
+    top: var(--gt-header-height);
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: auto;
+    min-height: 0;
+    padding: 0 12px calc(8px + env(safe-area-inset-bottom));
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .mobile-only {
+    display: inline-flex;
+  }
+  .chat-head {
+    padding: 8px 0;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+  .chat-head-main {
+    min-width: 0;
+    flex: 1;
+  }
+  .chat-title {
+    font-size: 14px;
+    max-width: 38vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .chat-head-btn {
+    margin: 0;
+    padding: 4px 6px;
+  }
+  .plant-select {
+    width: 112px;
+    flex: 0 0 auto;
+  }
+  /* 依据条在手机上压缩：一行字够看懂，不抢消息区高度 */
+  .context-bar {
+    padding-top: 6px;
+    gap: 6px;
+  }
+  .ctx-item {
+    flex: 1 1 100%;
+    padding: 6px 8px;
+  }
+  .ctx-desc {
+    font-size: 11px;
+  }
+  .clamp-2 {
+    -webkit-line-clamp: 1;
+  }
+  .chat-body {
+    padding: 8px 0;
+    overscroll-behavior: contain;
+  }
+  .chat-empty {
+    padding: 20px 8px 12px;
+  }
+  .chat-empty-emoji {
+    font-size: 34px;
+  }
+  .chat-input {
+    padding-top: 8px;
   }
 }
+
 </style>
