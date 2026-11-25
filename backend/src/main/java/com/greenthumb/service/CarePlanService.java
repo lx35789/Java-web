@@ -104,6 +104,16 @@ public class CarePlanService {
     /* ==================== 生成 ==================== */
 
     /**
+     * 诊断背景：把「这次诊断出什么问题」带进养护计划。
+     *
+     * @param label       病灶名（如「绿萝·叶斑病」，已含类别提示）
+     * @param waterFactor 浇水间隔修正系数；真菌/细菌病害期间适当拉长（>1）避免高湿助长病斑
+     * @param note       写给用户看的一句话提醒，落到 plan.llm_explain
+     */
+    public record PlanContext(String label, Double waterFactor, String note) {
+    }
+
+    /**
      * 为一盆植物生成全部养护计划（浇水 + 施肥）。
      *
      * <p>幂等设计：重复调用不会产生重复计划 —— 先把该植物旧的启用中计划停用
@@ -111,6 +121,15 @@ public class CarePlanService {
      */
     @Transactional
     public List<CarePlanVO> generate(Long userId, Long userPlantId) {
+        return generate(userId, userPlantId, null);
+    }
+
+    /**
+     * 带诊断背景生成：浇水间隔会额外乘一个病害系数，并把这层原因写进 llm_explain，
+     * 这样前端「为什么是 15 天」能直接读出来，而不是一个凭空变大的数字。
+     */
+    @Transactional
+    public List<CarePlanVO> generate(Long userId, Long userPlantId, PlanContext ctx) {
         UserPlantEntity plant = plantMapper.selectById(userPlantId);
         if (plant == null || !Objects.equals(plant.getUserId(), userId)) {
             throw new BizException(ErrorCode.NOT_FOUND, "植物不存在");
@@ -140,11 +159,18 @@ public class CarePlanService {
         // 2) 生成浇水计划
         LocalDate today = LocalDate.now();
         Coefficients c = waterCoefficients(plant, sp, today);
+        // 诊断背景参与系数计算：先写进 factors，后面 product() 会自动乘进去，
+        // 「为什么间隔变长了」就能在同一份 coefficient_detail 里查到
+        if (ctx != null && ctx.waterFactor() != null && !ctx.waterFactor().equals(1.0)) {
+            c.factors.put("disease", round2(ctx.waterFactor()));
+            c.labels.put("disease", ctx.label() == null ? "病害期" : ctx.label() + "·病害期");
+        }
         int waterDays = clamp(
                 Math.round(sp.getBaseWaterIntervalDays() == null ? 7 : sp.getBaseWaterIntervalDays()
                         * c.product()),
                 MIN_WATER_DAYS, MAX_WATER_DAYS);
-        CarePlanVO water = createPlan(userId, plant, sp, "WATER", waterDays, c, today);
+        CarePlanVO water = createPlan(userId, plant, sp, "WATER", waterDays, c,
+                buildExplain("WATER", waterDays, c, ctx), today);
 
         // 3) 生成施肥计划
         List<CarePlanVO> out = new ArrayList<>();
@@ -158,14 +184,50 @@ public class CarePlanService {
             Map<String, String> labels = new LinkedHashMap<>();
             labels.put("season", seasonLabel(today) + "施肥系数");
             out.add(createPlan(userId, plant, sp, "FERTILIZE", fertDays,
-                    new Coefficients(cd, labels, fertBase), today));
+                    new Coefficients(cd, labels, fertBase),
+                    buildExplain("FERTILIZE", fertDays, new Coefficients(cd, labels, fertBase), ctx), today));
         }
-        log.info("为植物 {} 生成养护计划：浇水 {} 天，施肥 {} 项", userPlantId, waterDays, out.size() - 1);
+        log.info("为植物 {} 生成养护计划：浇水 {} 天，施肥 {} 项{}",
+                userPlantId, waterDays, out.size() - 1, ctx == null ? "" : "（含诊断背景：" + ctx.label() + "）");
         return out;
     }
 
+    /**
+     * 生成一句人话解释：把系数、基准、结果串起来，有诊断背景时补上病灶与针对性动作。
+     * 空计划也能读，前端不用为 null 做特殊处理。
+     */
+    private String buildExplain(String planType, int days, Coefficients c, PlanContext ctx) {
+        StringBuilder sb = new StringBuilder();
+        if ("WATER".equals(planType)) {
+            if (!c.labels.isEmpty()) {
+                sb.append(String.join("；", c.labels.values())).append("，");
+            }
+            sb.append("基准 ").append(c.base).append(" 天，算下来每 ").append(days).append(" 天浇一次。");
+        } else {
+            if (!c.labels.isEmpty()) {
+                sb.append(String.join("；", c.labels.values())).append("，每 ");
+            } else {
+                sb.append("每 ");
+            }
+            sb.append(days).append(" 天施一次。");
+        }
+        if (ctx != null) {
+            sb.append("本次诊断：").append(ctx.label() == null ? "有病状" : ctx.label()).append("。");
+            if (ctx.note() != null && !ctx.note().isBlank()) {
+                sb.append(ctx.note());
+            }
+            if ("WATER".equals(planType) && ctx.waterFactor() != null && ctx.waterFactor() > 1.0) {
+                sb.append("病害未控制前先别往叶面喷水。");
+            }
+            if ("FERTILIZE".equals(planType)) {
+                sb.append("病害未控制前建议暂停施肥，避免刺激新叶招致病菌。");
+            }
+        }
+        return sb.toString();
+    }
+
     private CarePlanVO createPlan(Long userId, UserPlantEntity plant, PlantSpeciesEntity sp,
-                                  String planType, int days, Coefficients c, LocalDate today) {
+                                  String planType, int days, Coefficients c, String explain, LocalDate today) {
         CarePlanEntity p = new CarePlanEntity();
         p.setUserId(userId);
         p.setUserPlantId(plant.getId());
@@ -176,6 +238,7 @@ public class CarePlanService {
         p.setCoefficientDetail(toJson(c.factors));
         p.setStartDate(today);
         p.setGeneratedBy("RULE");
+        p.setLlmExplain(explain);
         p.setIsActive(1);
         p.setCreatedAt(LocalDateTime.now());
         p.setUpdatedAt(LocalDateTime.now());

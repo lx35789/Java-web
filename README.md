@@ -238,6 +238,7 @@ greenthumb/
 | POST | `/api/v1/diagnoses/ai` | AI 辅助诊断（模型 + 大模型讲解） |
 | POST | `/api/v1/diagnoses/symptom` | 症状判因（规则库） |
 | GET | `/api/v1/diagnoses` | 诊断记录 |
+| POST | `/api/v1/my-plants/from-diagnosis` | 诊断结果一键加入我的植物，并按诊断生成养护计划 |
 | GET | `/api/v1/care/plans`、`/calendar`、`/logs` | 养护计划 / 日历 / 日志 |
 | POST | `/api/v1/qa/sessions/{id}/messages` | AI 养护顾问（千问，SSE 流式，自动注入植物档案与养护记录） |
 

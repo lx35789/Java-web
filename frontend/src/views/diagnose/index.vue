@@ -175,13 +175,25 @@
 
               <!-- 识别结果 -->
               <template v-else>
-                <div class="disease-main">
+                <!-- 健康结果不能用红色：红色在这里等于「出问题了」，会让人误判 -->
+                <div class="disease-main" :class="{ 'is-healthy': diseaseHealthy }">
                   <div class="disease-label">识别结果</div>
                   <div class="disease-head">
                     <span class="disease-name">{{ disease.predicted.nameCn }}</span>
-                    <ConfidenceTag :confidence="disease.predicted.confidence" />
+                    <!-- 健康时置信度也用绿色：红色数字放在「健康」旁边会自相矛盾 -->
+                    <el-tag
+                      v-if="diseaseHealthy"
+                      type="success"
+                      size="small"
+                      round
+                      effect="plain"
+                    >{{ toPercent(disease.predicted.confidence) }}</el-tag>
+                    <ConfidenceTag v-else :confidence="disease.predicted.confidence" />
                     <el-tag v-if="disease.predicted.severity === 'HIGH'" type="danger" size="small">
                       严重
+                    </el-tag>
+                    <el-tag v-else-if="diseaseHealthy" type="success" size="small" effect="plain">
+                      无需处理
                     </el-tag>
                   </div>
                   <div class="disease-cat" :style="{ color: diseaseCategory.color }">
@@ -226,13 +238,22 @@
                   <template #title><span class="gt-text-small">{{ disease.note }}</span></template>
                 </el-alert>
 
-                <!-- 两个出口：病害成立 / 继续排查养护问题 -->
+                <!-- 三个出口：认领为我的植物 / 继续追问 / 继续排查养护问题 -->
                 <div class="branch-box">
                   <div class="branch-title">接下来怎么走？</div>
                   <div class="branch-actions">
-                    <el-button type="danger" plain @click="finishAsDisease">
+                    <el-button
+                      :type="diseaseHealthy ? 'success' : 'danger'"
+                      plain
+                      :loading="adopting"
+                      @click="openAdopt"
+                    >
                       <el-icon><CircleCheckFilled /></el-icon>
-                      确认是这个问题，结束诊断
+                      {{ diseaseHealthy ? '确认健康，加入我的植物' : '确认是这个问题，加入我的植物' }}
+                    </el-button>
+                    <el-button type="primary" plain @click="askAiDisease">
+                      <el-icon><ChatDotRound /></el-icon>
+                      继续追问 AI
                     </el-button>
                     <el-button type="primary" @click="goStep(2)">
                       不太像 / 想继续排查养护问题
@@ -242,6 +263,11 @@
                   <div class="gt-text-secondary gt-text-small gt-mt-8">
                     病理性病害和养护问题可能同时存在。比如浇水过多导致的根系受损，
                     也会让植株更容易被病菌侵染。
+                  </div>
+                  <div class="gt-text-secondary gt-text-small gt-mt-8">
+                    加入后会自动建一盆植物，并按这次诊断生成浇水和施肥计划
+                    （病害期会相应拉长浇水间隔）；只想留个记录可以点
+                    <span class="gt-link" @click="finishAsDisease">仅结束诊断</span>。
                   </div>
                 </div>
               </template>
@@ -385,7 +411,9 @@
           <div class="sum-block">
             <div class="sum-label">病害识别</div>
             <div v-if="disease && disease.predicted" class="sum-value">
-              <el-tag size="small" type="danger" effect="plain">{{ disease.predicted.nameCn }}</el-tag>
+              <el-tag size="small" :type="diseaseHealthy ? 'success' : 'danger'" effect="plain">
+                {{ disease.predicted.nameCn }}
+              </el-tag>
             </div>
             <div v-else-if="!file" class="sum-empty">无照片，已跳过</div>
             <div v-else-if="!diseaseCovered" class="sum-empty">该物种无数据，已跳过</div>
@@ -423,11 +451,58 @@
         </div>
       </el-col>
     </el-row>
+
+    <!-- 认领为我的植物：只问影响养护系数的几项，其余一律给默认值 -->
+    <el-dialog v-model="adoptVisible" title="加入我的植物" width="520px" :close-on-click-modal="false">
+      <div class="adopt-head">
+        <span class="adopt-species">{{ species?.commonName || '未识别物种' }}</span>
+        <el-tag :type="diseaseHealthy ? 'success' : 'danger'" size="small" effect="plain">
+          {{ disease?.predicted?.nameCn }}
+        </el-tag>
+      </div>
+      <div class="gt-text-secondary gt-text-small gt-mb-16">
+        这些信息会影响浇水和施肥的计算（光照越暗、盆越不透气，间隔越长），
+        填完后可以直接在「我的植物」里改。本次诊断会记进这盆植物的档案和时间线。
+      </div>
+
+      <el-form :model="adoptForm" label-width="82px">
+        <el-form-item label="昵称">
+          <el-input v-model="adoptForm.nickname" maxlength="20" placeholder="给它起个名字" />
+        </el-form-item>
+        <el-form-item label="摆放位置">
+          <el-select v-model="adoptForm.location" filterable allow-create style="width: 100%">
+            <el-option v-for="l in ADOPT_LOCATIONS" :key="l" :label="l" :value="l" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="光照">
+          <el-select v-model="adoptForm.lightLevel" style="width: 100%">
+            <el-option v-for="(v, k) in LIGHT_LEVELS" :key="k" :label="v.label" :value="k" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="盆器">
+          <div class="adopt-row">
+            <el-select v-model="adoptForm.potSize" style="flex: 1">
+              <el-option v-for="(v, k) in POT_SIZES" :key="k" :label="v.label" :value="k" />
+            </el-select>
+            <el-select v-model="adoptForm.potMaterial" style="flex: 1">
+              <el-option v-for="(v, k) in POT_MATERIALS" :key="k" :label="v.label" :value="k" />
+            </el-select>
+          </div>
+        </el-form-item>
+      </el-form>
+
+      <template #footer>
+        <el-button @click="adoptVisible = false">取消</el-button>
+        <el-button type="primary" :loading="adopting" @click="submitAdopt">
+          加入并生成养护计划
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -437,7 +512,8 @@ import {
   ArrowRight,
   CircleCheckFilled,
   FirstAidKit,
-  Umbrella
+  Umbrella,
+  ChatDotRound
 } from '@element-plus/icons-vue'
 
 import PageHeader from '@/components/PageHeader.vue'
@@ -452,10 +528,17 @@ import { recognizeSpecies } from '@/api/recognition'
 import { diagnoseDisease, diagnoseSymptom } from '@/api/diagnosis'
 import { getModelStatus } from '@/api/diagnosis'
 import { getSpeciesDetail } from '@/api/species'
-import { getMyPlants } from '@/api/myPlant'
+import { getMyPlants, adoptFromDiagnosis } from '@/api/myPlant'
 
 import { toPercent, formatLatency, diagnosisConfidence } from '@/utils/format'
-import { DISEASE_CATEGORY, DISEASE_COVERED_SPECIES, RECOGNITION_PROVIDER } from '@/utils/constants'
+import {
+  DISEASE_CATEGORY,
+  DISEASE_COVERED_SPECIES,
+  RECOGNITION_PROVIDER,
+  LIGHT_LEVELS,
+  POT_SIZES,
+  POT_MATERIALS
+} from '@/utils/constants'
 
 const route = useRoute()
 const router = useRouter()
@@ -524,9 +607,22 @@ const diseaseCovered = computed(() => {
   return list.some((s) => name.includes(s) || s.includes(name))
 })
 
-const diseaseCategory = computed(
-  () => DISEASE_CATEGORY[disease.value?.predicted?.category] || { label: '未分类', color: '#909399' }
-)
+/**
+ * 识别出来的是"健康"这一类（编码形如 Money_Plant_Healthy，中文名形如 绿萝·健康）。
+ * 健康是结论，不是警示，整张结果卡要换成绿色语气。
+ */
+const diseaseHealthy = computed(() => {
+  const p = disease.value?.predicted
+  if (!p) return false
+  const code = String(p.code || '').toLowerCase()
+  const name = String(p.nameCn || '')
+  return code.endsWith('_healthy') || code.endsWith('healthy') || name.includes('健康')
+})
+
+const diseaseCategory = computed(() => {
+  if (diseaseHealthy.value) return { label: '生长正常', color: 'var(--gt-primary)' }
+  return DISEASE_CATEGORY[disease.value?.predicted?.category] || { label: '未分类', color: '#909399' }
+})
 
 const confMeta = computed(() => diagnosisConfidence(symptomResult.value?.candidates?.[0]?.confidence ?? 0))
 
@@ -677,6 +773,96 @@ function finishAsDisease() {
   router.push('/diagnose/records')
 }
 
+/* ---------------- 认领为我的植物 ---------------- */
+const ADOPT_LOCATIONS = ['客厅', '卧室', '书房', '阳台', '厨房', '卫生间', '办公室']
+const adoptVisible = ref(false)
+const adopting = ref(false)
+const adoptForm = reactive({
+  nickname: '',
+  location: '客厅',
+  lightLevel: 'MEDIUM',
+  potSize: 'MEDIUM',
+  potMaterial: 'PLASTIC'
+})
+
+/**
+ * 打开认领弹窗。
+ *
+ * 为什么要弹窗而不是「一键直接建」：光照、盆器材质是浇水系数的输入，
+ * 全用默认值算出来的计划对用户没有可信度；但字段只留 4 项，
+ * 其余（土壤、购买日期）走后端默认值，确认一次就能完成。
+ */
+function openAdopt() {
+  if (!disease.value?.predicted) return
+  if (!disease.value.recordId) {
+    ElMessage.warning('这次诊断没有生成记录，无法关联，请重新识别一次')
+    return
+  }
+  if (!species.value?.id) {
+    ElMessage.warning('还不能确定这是什么植物，请回到第 1 步确认种类再加入')
+    return
+  }
+  adoptForm.nickname = adoptForm.nickname || species.value.commonName || ''
+  // 物种档案里的推荐光照/土壤比一个写死的默认值靠谱，有就用
+  if (species.value.lightRequirement) adoptForm.lightLevel = species.value.lightRequirement
+  adoptVisible.value = true
+}
+
+async function submitAdopt() {
+  adopting.value = true
+  try {
+    const res = await adoptFromDiagnosis({
+      recordId: disease.value.recordId,
+      speciesId: species.value?.id || null,
+      speciesName: species.value?.commonName || null,
+      diseaseLabel: disease.value?.predicted?.nameCn || null,
+      diseaseCategory: disease.value?.predicted?.category || null,
+      soilType: species.value?.soilType || null,
+      ...adoptForm
+    })
+    adoptVisible.value = false
+    if (res?.alreadyAdopted) {
+      ElMessage.info('这次诊断之前已经添加过了，直接打开这盆植物')
+    } else {
+      ElMessage.success('已加入我的植物，养护计划已按这次诊断生成')
+    }
+    diseaseDecision.value = 'disease'
+    if (res?.plantId) router.push(`/plants/${res.plantId}`)
+    else router.push('/plants')
+  } finally {
+    adopting.value = false
+  }
+}
+
+/** 第 2 步的「继续追问」：把病害结论喂给 AI 顾问，而不是只带症状诊断的结论 */
+function askAiDisease() {
+  const d = disease.value
+  if (!d?.predicted) {
+    ElMessage.warning('还没有识别结果，先点「开始病害识别」')
+    return
+  }
+  const pct = Math.round((d.predicted.confidence || 0) * 100)
+  const lines = [`诊断类型：病害识别（病理性）；识别结果：${d.predicted.nameCn}，置信度 ${pct}%`]
+  if (d.symptoms) lines.push(`典型症状：${d.symptoms}`)
+  if (d.treatment) lines.push(`系统给出的处理步骤：${d.treatment}`)
+  if (d.prevention) lines.push(`预防建议：${d.prevention}`)
+  sessionStorage.setItem(
+    'gt:ai-context',
+    JSON.stringify({
+      plantId: userPlantId.value || null,
+      title: `${d.predicted.nameCn}（${pct}%）`,
+      text: lines.join('\n').slice(0, 900)
+    })
+  )
+  router.push({
+    path: '/qa',
+    query: {
+      from: 'diagnosis',
+      ...(userPlantId.value ? { plantId: userPlantId.value } : {})
+    }
+  })
+}
+
 /* ---------------- 第 3 步 ---------------- */
 async function startAnalyze() {
   analyzing.value = true
@@ -706,6 +892,7 @@ function reset() {
   symptomCodes.value = []
   symptomContext.value = { leafPosition: null, veinPattern: null, causeHint: null }
   symptomResult.value = null
+  adoptVisible.value = false
 }
 
 function finish() {
@@ -904,6 +1091,12 @@ onMounted(async () => {
   background: #fff6f5;
 }
 
+/* 健康：绿色边框 + 浅绿底，红色只留给真正的病害 */
+.disease-main.is-healthy {
+  border-color: var(--gt-primary);
+  background: var(--gt-primary-light);
+}
+
 /* 结果小标题：让用户一眼知道这是最终结论，不是中间数据 */
 .disease-label {
   font-size: 13px;
@@ -911,6 +1104,10 @@ onMounted(async () => {
   color: var(--gt-danger);
   font-weight: 600;
   margin-bottom: 8px;
+}
+
+.disease-main.is-healthy .disease-label {
+  color: var(--gt-primary-dark);
 }
 
 .disease-head {
@@ -930,6 +1127,10 @@ onMounted(async () => {
   font-weight: 800;
   color: #b3261e;
   letter-spacing: 0.5px;
+}
+
+.disease-main.is-healthy .disease-name {
+  color: var(--gt-primary-dark);
 }
 
 /* 病害类别（真菌/细菌/虫害…）保留物种色，但放大到可读 */
@@ -999,7 +1200,7 @@ onMounted(async () => {
 .treatment {
   font-size: 15px;
   line-height: 1.9;
-  color: var(--gt-text-primary);
+  color: var(--gt-text);
   white-space: pre-line;
   margin-top: 8px;
 }
@@ -1023,6 +1224,26 @@ onMounted(async () => {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+/* 认领弹窗：物种名和病名并排，让用户确认「加的是它、病是它」 */
+.adopt-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.adopt-species {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--gt-text);
+}
+
+.adopt-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
 }
 
 /* ---------------- 第 3 步 ---------------- */
@@ -1079,7 +1300,7 @@ onMounted(async () => {
 .sum-value {
   font-size: 16px;
   font-weight: 600;
-  color: var(--gt-text-primary);
+  color: var(--gt-text);
   display: flex;
   align-items: center;
   gap: 6px;

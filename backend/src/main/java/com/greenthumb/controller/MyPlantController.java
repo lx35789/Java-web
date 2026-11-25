@@ -69,4 +69,15 @@ public class MyPlantController {
     public ApiResponse<MyPlantVO> create(@RequestBody CreatePlantRequest request) {
         return ApiResponse.ok(myPlantService.create(CurrentUser.id(), request));
     }
+
+    /**
+     * 把一次诊断结果一键认领成我的植物，并按这次诊断生成养护计划。
+     *
+     * <p>路径固定为 /from-diagnosis，与 /{id:\d+} 不冲突（后者只匹配纯数字）。
+     */
+    @PostMapping("/from-diagnosis")
+    public ApiResponse<com.greenthumb.vo.AdoptPlantVO> adoptFromDiagnosis(
+            @RequestBody com.greenthumb.dto.AdoptDiagnosisRequest request) {
+        return ApiResponse.ok(myPlantService.adoptFromDiagnosis(CurrentUser.id(), request));
+    }
 }

@@ -3,6 +3,7 @@ package com.greenthumb.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.greenthumb.common.BizException;
 import com.greenthumb.common.ErrorCode;
+import com.greenthumb.dto.AdoptDiagnosisRequest;
 import com.greenthumb.dto.CreatePlantRequest;
 import com.greenthumb.entity.CareLogEntity;
 import com.greenthumb.entity.CarePlanEntity;
@@ -14,10 +15,13 @@ import com.greenthumb.entity.UserPlantEntity;
 import com.greenthumb.mapper.CareLogMapper;
 import com.greenthumb.mapper.CarePlanMapper;
 import com.greenthumb.mapper.CareTaskMapper;
+import com.greenthumb.entity.DiseaseInfoEntity;
+import com.greenthumb.mapper.DiseaseInfoMapper;
 import com.greenthumb.mapper.DiseaseRecordMapper;
 import com.greenthumb.mapper.PlantPhotoMapper;
 import com.greenthumb.mapper.PlantSpeciesMapper;
 import com.greenthumb.mapper.UserPlantMapper;
+import com.greenthumb.vo.AdoptPlantVO;
 import com.greenthumb.vo.MyPlantDetailVO;
 import com.greenthumb.vo.MyPlantVO;
 import org.springframework.stereotype.Service;
@@ -58,7 +62,10 @@ public class MyPlantService {
     private final CareTaskMapper careTaskMapper;
     private final PlantPhotoMapper plantPhotoMapper;
     private final DiseaseRecordMapper diseaseRecordMapper;
+    private final DiseaseInfoMapper diseaseInfoMapper;
     private final com.greenthumb.mapper.PlantObservationMapper observationMapper;
+    /** 认领诊断后要立刻生成养护计划；CarePlanService 不反向依赖本服务，注入不会成环 */
+    private final CarePlanService carePlanService;
 
     public MyPlantService(UserPlantMapper userPlantMapper,
                           PlantSpeciesMapper plantSpeciesMapper,
@@ -67,7 +74,9 @@ public class MyPlantService {
                           CareTaskMapper careTaskMapper,
                           PlantPhotoMapper plantPhotoMapper,
                           DiseaseRecordMapper diseaseRecordMapper,
-                          com.greenthumb.mapper.PlantObservationMapper observationMapper) {
+                          DiseaseInfoMapper diseaseInfoMapper,
+                          com.greenthumb.mapper.PlantObservationMapper observationMapper,
+                          CarePlanService carePlanService) {
         this.userPlantMapper = userPlantMapper;
         this.plantSpeciesMapper = plantSpeciesMapper;
         this.carePlanMapper = carePlanMapper;
@@ -75,7 +84,9 @@ public class MyPlantService {
         this.careTaskMapper = careTaskMapper;
         this.plantPhotoMapper = plantPhotoMapper;
         this.diseaseRecordMapper = diseaseRecordMapper;
+        this.diseaseInfoMapper = diseaseInfoMapper;
         this.observationMapper = observationMapper;
+        this.carePlanService = carePlanService;
     }
 
     /* ================= 列表 ================= */
@@ -289,15 +300,21 @@ public class MyPlantService {
         }
 
         // 4) 诊断
-        for (DiseaseRecordEntity d : diseaseRecordMapper.selectList(
+        List<DiseaseRecordEntity> diagRows = diseaseRecordMapper.selectList(
                 new LambdaQueryWrapper<DiseaseRecordEntity>()
                         .eq(DiseaseRecordEntity::getUserPlantId, plantId)
                         .orderByDesc(DiseaseRecordEntity::getCreatedAt)
-                        .last("limit 40"))) {
+                        .last("limit 40"));
+        // 模型编码（Money_Plant_Leaf_Spot）不该出现在用户界面上，能查到知识库就翻成中文名
+        Map<String, String> diseaseNames = diseaseNameByCode(
+                diagRows.stream().map(DiseaseRecordEntity::getPredictedCode).filter(Objects::nonNull).distinct().toList());
+        for (DiseaseRecordEntity d : diagRows) {
             Event e = event(d.getCreatedAt(), "DIAGNOSIS", "诊断");
             e.m.put("id", "diag-" + d.getId());
-            e.m.put("title", "诊断 · " + (d.getPredictedCode() == null ? "未命名" : d.getPredictedCode()));
-            e.m.put("detail", d.getDiagnosisType());
+            String name = diseaseNames.get(d.getPredictedCode());
+            e.m.put("title", "诊断 · " + (name != null ? name
+                    : (d.getPredictedCode() == null ? "未命名" : d.getPredictedCode())));
+            e.m.put("detail", "DISEASE".equals(d.getDiagnosisType()) ? "病害识别" : "症状诊断");
             e.m.put("status", d.getStatus());
             all.add(e);
         }
@@ -380,6 +397,150 @@ public class MyPlantService {
         userPlantMapper.insert(p);
 
         return toVO(p, species);
+    }
+
+    /* ================= 从诊断认领植物 ================= */
+
+    /**
+     * 把一次诊断结果变成「我的植物」，并立刻按这次诊断生成养护计划。
+     *
+     * <p>为什么放在 MyPlantService 而不是 DiagnosisService：
+     * 这里是唯一同时需要 user_plant、disease_record、care_plan 三张表的地方，
+     * 而 plant 是主体（诊断只是它的来源），放在植株域更自然，也避免诊断服务反向依赖养护服务。
+     *
+     * <p>幂等：同一条诊断记录重复点击只会认领一次，第二次直接返回已建好的植株，
+     * 否则用户手抖点两下就会多出一盆「绿萝（副本）」。
+     */
+    @Transactional
+    public AdoptPlantVO adoptFromDiagnosis(Long userId, AdoptDiagnosisRequest req) {
+        if (req == null || req.recordId() == null) {
+            throw new BizException(ErrorCode.PARAM_INVALID, "缺少诊断记录 id");
+        }
+        DiseaseRecordEntity rec = diseaseRecordMapper.selectById(req.recordId());
+        if (rec == null || !Objects.equals(rec.getUserId(), userId)
+                || (rec.getDeleted() != null && rec.getDeleted() == 1)) {
+            throw new BizException(ErrorCode.NOT_FOUND, "诊断记录不存在");
+        }
+
+        // 已经认领过：返回原植株，不再重复生成计划
+        if (rec.getUserPlantId() != null) {
+            UserPlantEntity exist = userPlantMapper.selectById(rec.getUserPlantId());
+            if (exist != null) {
+                PlantSpeciesEntity sp = speciesOf(exist.getSpeciesId());
+                return new AdoptPlantVO(exist.getId(), exist.getNickname(),
+                        sp == null ? null : sp.getCommonName(), exist.getHealthStatus(),
+                        true, List.of());
+            }
+        }
+
+        PlantSpeciesEntity species = resolveAdoptSpecies(req);
+        boolean healthy = isHealthyCode(rec.getPredictedCode())
+                || (req.diseaseLabel() != null && req.diseaseLabel().contains("健康"));
+
+        LocalDateTime now = LocalDateTime.now();
+        UserPlantEntity p = new UserPlantEntity();
+        p.setUserId(userId);
+        p.setSpeciesId(species.getId());
+        p.setNickname(blankToNull(req.nickname()) != null
+                ? req.nickname().trim() : species.getCommonName());
+        p.setLocation(blankToNull(req.location()));
+        p.setLightLevel(blankToNull(req.lightLevel()));
+        p.setPotSize(blankToNull(req.potSize()));
+        p.setPotMaterial(blankToNull(req.potMaterial()));
+        p.setSoilType(blankToNull(req.soilType()) != null ? req.soilType().trim() : species.getSoilType());
+        p.setAcquiredDate(LocalDate.now());
+        p.setHealthStatus(healthy ? "HEALTHY" : "DISEASED");
+        p.setAddSource("DIAGNOSIS");
+        p.setCoverPhotoId(rec.getPhotoId());
+        p.setNote(buildAdoptNote(rec, req, healthy));
+        p.setDeleted(0);
+        p.setCreatedAt(now);
+        p.setUpdatedAt(now);
+        userPlantMapper.insert(p);
+
+        // 回填诊断记录：这条诊断从此挂在这盆植物身上，详情页时间线才能串起来
+        rec.setUserPlantId(p.getId());
+        rec.setStatus(healthy ? "RESOLVED" : "TREATING");
+        if (healthy) {
+            rec.setResolvedAt(now);
+        }
+        diseaseRecordMapper.updateById(rec);
+
+        // 带着诊断生成养护计划：真菌/细菌病害期把浇水间隔再拉长一点，避免高湿助长病斑
+        CarePlanService.PlanContext ctx = healthy ? null : new CarePlanService.PlanContext(
+                req.diseaseLabel() == null ? codeLabel(rec.getPredictedCode()) : req.diseaseLabel(),
+                diseaseWaterFactor(req.diseaseCategory()),
+                healthy ? "" : "先按诊断结论处理病灶，再回到常规养护节奏；");
+        List<com.greenthumb.vo.CarePlanVO> plans =
+                carePlanService.generate(userId, p.getId(), ctx);
+
+        PlantSpeciesEntity sp = speciesOf(p.getSpeciesId());
+        return new AdoptPlantVO(p.getId(), p.getNickname(),
+                sp == null ? null : sp.getCommonName(), p.getHealthStatus(), false, plans);
+    }
+
+    /** 物种：优先用第 1 步识别出的 id，其次按中文名查库，都没有就明确报错而不是建一盆没有物种的植物 */
+    private PlantSpeciesEntity resolveAdoptSpecies(AdoptDiagnosisRequest req) {
+        if (req.speciesId() != null) {
+            PlantSpeciesEntity sp = speciesOf(req.speciesId());
+            if (sp != null) return sp;
+        }
+        String name = blankToNull(req.speciesName());
+        if (name != null) {
+            PlantSpeciesEntity sp = plantSpeciesMapper.selectOne(
+                    new LambdaQueryWrapper<PlantSpeciesEntity>()
+                            .eq(PlantSpeciesEntity::getCommonName, name.trim())
+                            .last("limit 1"));
+            if (sp != null) return sp;
+        }
+        throw new BizException(ErrorCode.PARAM_INVALID,
+                "还不能确定这是什么植物，请先在第 1 步确认种类后再加入");
+    }
+
+    /** 病害期浇水修正：真菌/细菌靠水传播，间隔拉长；虫害和生理性问题不动浇水节奏 */
+    private static double diseaseWaterFactor(String category) {
+        if (category == null) return 1.0;
+        return switch (category.toUpperCase()) {
+            case "FUNGAL" -> 1.15;
+            case "BACTERIAL" -> 1.2;
+            default -> 1.0;
+        };
+    }
+
+    private static boolean isHealthyCode(String code) {
+        return code != null && code.toLowerCase().endsWith("healthy");
+    }
+
+    private static String codeLabel(String code) {
+        return code == null ? "病理性病害" : code.replace('_', ' ');
+    }
+
+    /** 植物备注：把诊断时间、结论、置信度、处理建议压成一段，详情页直接可读 */
+    private String buildAdoptNote(DiseaseRecordEntity rec, AdoptDiagnosisRequest req, boolean healthy) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(rec.getCreatedAt() == null ? "" : rec.getCreatedAt().format(DATE_TIME)).append(" 诊断：");
+        sb.append(req.diseaseLabel() == null ? codeLabel(rec.getPredictedCode()) : req.diseaseLabel());
+        if (rec.getConfidence() != null) {
+            sb.append("（置信度 ")
+                    .append(Math.round(rec.getConfidence().doubleValue() * 100)).append("%）");
+        }
+        if (healthy) {
+            sb.append("。当时植株状态正常，无需处理。");
+        } else if (rec.getSuggestion() != null && !rec.getSuggestion().isBlank()) {
+            sb.append("。处理建议：").append(rec.getSuggestion());
+        }
+        String s = sb.toString();
+        return s.length() > 400 ? s.substring(0, 400) + "…" : s;
+    }
+
+    /** 编码 → 中文病名；知识库没收录的编码会被忽略，调用方自行兜底 */
+    private Map<String, String> diseaseNameByCode(List<String> codes) {
+        if (codes.isEmpty()) return Map.of();
+        return diseaseInfoMapper.selectList(new LambdaQueryWrapper<DiseaseInfoEntity>()
+                        .in(DiseaseInfoEntity::getCode, codes))
+                .stream()
+                .filter(d -> d.getCode() != null && d.getNameCn() != null)
+                .collect(Collectors.toMap(DiseaseInfoEntity::getCode, DiseaseInfoEntity::getNameCn, (a, b) -> a));
     }
 
     /* ================= 内部 ================= */
