@@ -466,7 +466,7 @@ public class CarePlanService {
         }
     }
 
-    private static String lightLabel(String light) {
+    public static String lightLabel(String light) {
         if (light == null) return "";
         switch (light.trim().toUpperCase()) {
             case "DIRECT": return "直射光";
@@ -488,7 +488,7 @@ public class CarePlanService {
         }
     }
 
-    private static String potLabel(String pot) {
+    public static String potLabel(String pot) {
         if (pot == null) return "";
         switch (pot.trim().toUpperCase()) {
             case "TERRACOTTA": return "陶盆（透气）";

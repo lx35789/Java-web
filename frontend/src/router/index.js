@@ -78,8 +78,13 @@ const routes = [
         component: () => import('@/views/diagnose/records.vue'),
         meta: { title: '诊断记录', hidden: true, activeMenu: '/diagnose' }
       },
-      // 第七周：AI 问答从前端移除（问答能力已并入诊断第 2 步的养护建议）
-      { path: 'qa', redirect: '/diagnose' },
+      // AI 养护顾问：围绕某一盆植物持续对话，接的是千问（后端 /qa 接口）
+      {
+        path: 'qa',
+        name: 'AiAdvisor',
+        component: () => import('@/views/qa/index.vue'),
+        meta: { title: 'AI 养护顾问' }
+      },
 
       /* --- 养护：三个独立路由，顶部导航切换 ---
              不能用页内 Tab：那样浏览器后退/移动端返回键会直接退出养护模块，

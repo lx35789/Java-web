@@ -465,6 +465,7 @@ CREATE TABLE `qa_session` (
   user_plant_id BIGINT UNSIGNED DEFAULT NULL              COMMENT '针对某盆植物的追问，可注入其养护历史',
   title         VARCHAR(255)    DEFAULT NULL              COMMENT '首条提问截断',
   message_count INT             NOT NULL DEFAULT 0,
+  diagnosis_context TEXT        DEFAULT NULL              COMMENT '本次对话的起点：诊断结论摘要（病害/置信度/建议），每次提问注入系统提示词',
   created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   deleted       TINYINT         NOT NULL DEFAULT 0,

@@ -239,6 +239,7 @@ greenthumb/
 | POST | `/api/v1/diagnoses/symptom` | 症状判因（规则库） |
 | GET | `/api/v1/diagnoses` | 诊断记录 |
 | GET | `/api/v1/care/plans`、`/calendar`、`/logs` | 养护计划 / 日历 / 日志 |
+| POST | `/api/v1/qa/sessions/{id}/messages` | AI 养护顾问（千问，SSE 流式，自动注入植物档案与养护记录） |
 
 AI 服务（内部，端口 8000）：
 

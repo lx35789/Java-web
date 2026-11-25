@@ -45,3 +45,6 @@ _run.*
 _t*.out
 _t*.err
 *.bak
+
+# 截图/调试产物
+report/_debug/

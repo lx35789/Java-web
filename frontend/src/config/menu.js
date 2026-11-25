@@ -17,7 +17,9 @@ export const MENU_GROUPS = [
     title: 'AI 能力',
     items: [
       // 「拍照识别」已并入「智能诊断」的第 1 步，不再单独占一个菜单入口。
-      { path: '/diagnose', title: '智能诊断', icon: 'FirstAidKit', badge: '核心' }
+      { path: '/diagnose', title: '智能诊断', icon: 'FirstAidKit', badge: '核心' },
+      // 第十一周恢复：这次是真接千问的连续对话，会读这盆植物的档案与养护记录
+      { path: '/qa', title: 'AI 顾问', icon: 'ChatDotRound', badge: '新' }
     ]
   },
   {

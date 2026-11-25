@@ -328,7 +328,10 @@
               </template>
 
               <div class="gt-mt-16">
-                <el-button type="primary" plain @click="router.push('/qa')">继续追问</el-button>
+                <el-button type="primary" plain @click="askAi">继续追问</el-button>
+                <div class="gt-text-secondary gt-text-small gt-mt-8">
+                  会把这盆植物的档案、浇水记录和这次诊断结论一起带给 AI 顾问
+                </div>
               </div>
             </template>
           </div>
@@ -708,6 +711,57 @@ function reset() {
 function finish() {
   ElMessage.success('诊断完成，已记入诊断记录')
   router.push('/diagnose/records')
+}
+
+/**
+ * 继续追问：带着这次诊断的结论跳到 AI 顾问。
+ *
+ * 为什么用 sessionStorage 而不是 query：结论文本有几百字（依据 + 处理步骤），
+ * 塞进 URL 又长又容易被截断；sessionStorage 生命周期正好是「这一次跳转」，
+ * 用完即删，不会串到下一次对话。
+ */
+function buildAiContext() {
+  const r = symptomResult.value
+  if (!r) return null
+  const lines = []
+
+  if (r.needMoreInfo) {
+    lines.push('诊断结论：信息不足，系统没有给出确定原因。')
+    if (r.fallbackSuggestion) lines.push(`系统兜底建议：${r.fallbackSuggestion}`)
+    if (r.followUpQuestions?.length) lines.push(`系统还想补充的信息：${r.followUpQuestions.join('；')}`)
+    return {
+      plantId: userPlantId.value || null,
+      title: '信息不足',
+      text: lines.join('\n')
+    }
+  }
+
+  const top = (r.candidates || [])[0]
+  if (top) {
+    const pct = Math.round((top.confidence || 0) * 100)
+    lines.push(`诊断类型：症状诊断（生理性/养护问题）；最可能原因：${top.nameCn}，置信度 ${pct}%`)
+    if (top.evidence?.length) lines.push(`判断依据：${top.evidence.join('；')}`)
+    if (top.actionPlan?.length) lines.push(`系统给出的处理步骤：${top.actionPlan.join('；')}`)
+  }
+  if (r.suggestion) lines.push(`综合建议：${r.suggestion}`)
+
+  return {
+    plantId: userPlantId.value || null,
+    title: top ? `${top.nameCn}（${Math.round((top.confidence || 0) * 100)}%）` : '症状诊断',
+    text: lines.join('\n').slice(0, 900)
+  }
+}
+
+function askAi() {
+  const ctx = buildAiContext()
+  if (ctx) sessionStorage.setItem('gt:ai-context', JSON.stringify(ctx))
+  router.push({
+    path: '/qa',
+    query: {
+      from: 'diagnosis',
+      ...(userPlantId.value ? { plantId: userPlantId.value } : {})
+    }
+  })
 }
 
 onMounted(async () => {

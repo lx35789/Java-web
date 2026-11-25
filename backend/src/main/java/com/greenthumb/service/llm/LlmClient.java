@@ -9,13 +9,19 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Iterator;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 /**
  * 大模型客户端（OpenAI 兼容协议）。
@@ -121,8 +127,33 @@ public class LlmClient {
         }
     }
 
-    /** 纯文字问答（第 3 层）。 */
+    /** 一条对话消息。role 取 system / user / assistant。 */
+    public record Message(String role, String content) {
+    }
+
+    /** 纯文字问答（第 3 层，单轮）。 */
     public Result chatText(String system, String user) {
+        Result r = chat(List.of(new Message("system", system), new Message("user", user)), 0.3, 1200, false, null);
+        return r;
+    }
+
+    /** 多轮对话（非流式）。 */
+    public Result chat(List<Message> messages, double temperature, int maxTokens) {
+        return chat(messages, temperature, maxTokens, false, null);
+    }
+
+    /**
+     * 多轮对话（流式）。每收到一个增量片段就回调 onDelta，用于 SSE 推给前端。
+     * <p>
+     * 注意：onDelta 抛出的异常会被当成"客户端已断开"处理，此时中断读取并返回已生成的内容，
+     * 避免前端关页面后后台还在空转（还继续烧 token）。
+     */
+    public Result chatStream(List<Message> messages, double temperature, int maxTokens, Consumer<String> onDelta) {
+        return chat(messages, temperature, maxTokens, true, onDelta);
+    }
+
+    private Result chat(List<Message> messages, double temperature, int maxTokens,
+                        boolean stream, Consumer<String> onDelta) {
         if (!isConfigured()) {
             return Result.fail("未配置大模型 API Key（greenthumb.llm.api-key）", 0);
         }
@@ -130,14 +161,79 @@ public class LlmClient {
         try {
             ObjectNode body = JSON.createObjectNode();
             body.put("model", textModel);
-            body.put("temperature", 0.3);
-            body.put("max_tokens", 1200);
-            ArrayNode messages = body.putArray("messages");
-            messages.addObject().put("role", "system").put("content", system);
-            messages.addObject().put("role", "user").put("content", user);
-            return post(body, t0);
+            body.put("temperature", temperature);
+            body.put("max_tokens", maxTokens);
+            if (stream) body.put("stream", true);
+            ArrayNode arr = body.putArray("messages");
+            for (Message m : messages) {
+                arr.addObject().put("role", m.role()).put("content", m.content());
+            }
+            return stream ? postStream(body, t0, onDelta) : post(body, t0);
         } catch (Exception e) {
             return Result.fail("构造请求失败：" + e.getMessage(), System.currentTimeMillis() - t0);
+        }
+    }
+
+    private Result postStream(ObjectNode body, long t0, Consumer<String> onDelta) {
+        try {
+            HttpRequest req = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "/chat/completions"))
+                    .timeout(Duration.ofMillis(timeoutMs))
+                    .header("Content-Type", "application/json")
+                    .header("Accept", "text/event-stream")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8))
+                    .build();
+
+            HttpResponse<Stream<String>> resp =
+                    http.send(req, HttpResponse.BodyHandlers.ofLines());
+
+            if (resp.statusCode() != 200) {
+                StringBuilder err = new StringBuilder();
+                try (Stream<String> lines = resp.body()) {
+                    lines.limit(20).forEach(l -> err.append(l).append('\n'));
+                }
+                log.warn("大模型流式返回 {}：{}", resp.statusCode(),
+                        err.substring(0, Math.min(200, err.length())));
+                return Result.fail("HTTP " + resp.statusCode(), System.currentTimeMillis() - t0);
+            }
+
+            StringBuilder full = new StringBuilder();
+            List<String> parts = new ArrayList<>();
+            try (Stream<String> lines = resp.body()) {
+                Iterator<String> it = lines.iterator();
+                while (it.hasNext()) {
+                    String line = it.next().trim();
+                    if (!line.startsWith("data:")) continue;
+                    String data = line.substring(5).trim();
+                    if (data.isEmpty() || "[DONE]".equals(data)) continue;
+                    JsonNode node = JSON.readTree(data);
+                    JsonNode delta = node.path("choices").path(0).path("delta").path("content");
+                    if (delta.isMissingNode() || delta.isNull()) continue;
+                    String piece = delta.asText("");
+                    if (piece.isEmpty()) continue;
+                    parts.add(piece);
+                    full.append(piece);
+                    if (onDelta != null) {
+                        try {
+                            onDelta.accept(piece);
+                        } catch (UncheckedIOException clientGone) {
+                            log.info("下游已断开，停止读取模型流");
+                            break;
+                        }
+                    }
+                }
+            }
+
+            long ms = System.currentTimeMillis() - t0;
+            String content = full.toString();
+            if (content.isBlank()) return Result.fail("模型返回空内容", ms);
+            return new Result(true, content, null, ms);
+        } catch (java.net.http.HttpTimeoutException e) {
+            return Result.fail("超时（" + timeoutMs + "ms）", System.currentTimeMillis() - t0);
+        } catch (Exception e) {
+            return Result.fail(e.getClass().getSimpleName() + "：" + e.getMessage(),
+                    System.currentTimeMillis() - t0);
         }
     }
 
