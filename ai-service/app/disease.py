@@ -68,6 +68,8 @@ SPECIES_CN = {
     "Cactus": "仙人掌",
     "Snake Plant": "虎皮兰",
     "Spider Plant": "吊兰",
+    # v3 新增
+    "Tagetes": "万寿菊",
 }
 
 # 指定物种时，该物种所有类别的概率合计至少要达到这个值，否则视为
@@ -453,6 +455,22 @@ class ClassifierRegistry:
         「放了仙人掌照片不识别病害」。
         """
         return self.general.species_set
+
+    @property
+    def covered_species(self) -> List[str]:
+        """**全部**能做病害识别的物种 = 通用模型物种 ∪ 各专用模型物种。
+
+        为什么不能只报通用模型的物种：
+          兰花这类新物种只训练了专用模型（general 44 类里没有它），
+          若 /health 仍只回 general.species_set，后端 model-status 的
+          coveredSpecies 里就没有兰花，前端据此判断「该物种不支持病害识别」
+          并把整块 UI 隐藏 —— 专用模型部署得再对也不会被调用。
+          这正是 docs/23 记过的「四处单独看都对、合起来才是错」。
+        """
+        out = set(self.general.species_set)
+        for c in self.specialized.values():
+            out.update(c.species_set)
+        return sorted(s for s in out if s)
 
     # ------------------------------------------------------------------
     def pick(self, species: Optional[str]) -> DiseaseClassifier:

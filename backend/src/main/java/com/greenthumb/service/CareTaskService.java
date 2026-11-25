@@ -58,15 +58,18 @@ public class CareTaskService {
     private final CareLogMapper logMapper;
     private final UserPlantMapper plantMapper;
     private final PlantSpeciesMapper speciesMapper;
+    /** 完成浇水后按实际节奏校准计划；CarePlanService 只依赖 mapper，不会形成循环 */
+    private final CarePlanService planService;
 
     public CareTaskService(CareTaskMapper taskMapper, CarePlanMapper planMapper,
                            CareLogMapper logMapper, UserPlantMapper plantMapper,
-                           PlantSpeciesMapper speciesMapper) {
+                           PlantSpeciesMapper speciesMapper, CarePlanService planService) {
         this.taskMapper = taskMapper;
         this.planMapper = planMapper;
         this.logMapper = logMapper;
         this.plantMapper = plantMapper;
         this.speciesMapper = speciesMapper;
+        this.planService = planService;
     }
 
     /* ==================== 查询 ==================== */
@@ -219,6 +222,18 @@ public class CareTaskService {
         }
 
         log.info("完成任务 {} → 养护记录 {}", taskId, logRow.getId());
+
+        // 浇完水就拿「实际间隔」回头校准计划：这是闭环的入口，
+        // 用户不需要手动点"重新生成"，计划会自己跟着这盆植物的节奏走。
+        if ("WATER".equals(task.getTaskType())) {
+            try {
+                planService.adapt(userId, task.getUserPlantId(), "TASK_DONE");
+            } catch (Exception e) {
+                // 自适应失败不能影响"任务已完成"这个事实
+                log.warn("完成任务后自适应失败：{}", e.getMessage());
+            }
+        }
+
         return toVO(task);
     }
 

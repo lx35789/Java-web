@@ -37,6 +37,29 @@ im.save(dst, "JPEG", quality=92)
 | 通用 29 类 | `D:\indoor-plant-data\general_prep` | 11,315 张 / 29 类 |
 | 芦荟专用 5 类 | `D:\indoor-plant-data\aloe5_prep` | 4,461 张 / 5 类 |
 
+### v3 扩展数据
+
+三个 Mendeley 分卷 ZIP 通过以下命令整理：
+
+```powershell
+python prepare_mendeley_v3.py `
+  --zip <part1.zip> --zip <part2.zip> --zip <part3.zip> `
+  --out ..\..\experiments\data\mendeley_v3 --max-side 448
+```
+
+训练器可同时读取多个数据根，并用 `--class-prefix` 训练单物种模型：
+
+```powershell
+python train_indoor.py `
+  --data D:\indoor-plant-data\combined_v2 `
+  --extra-data ..\..\experiments\data\mendeley_v3 `
+  --out ..\..\experiments\data\general_v3 `
+  --arch mobilenetv3_large_100 --img-size 160 --epochs 20 `
+  --batch 64 --cap 800 --group-split 1 --pretrained 0
+```
+
+完整 v3 参数和指标见 `docs/26-模型v3-10物种44类.md`。
+
 ## 二、训练
 
 ```bash

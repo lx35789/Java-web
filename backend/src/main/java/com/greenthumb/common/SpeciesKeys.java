@@ -10,7 +10,7 @@ import java.util.Map;
  * 模型类别码形如 {@code Aloe_Rust}、{@code Rose_Powdery_Mildew}，前缀就是物种 key。
  * <p>
  * 这个映射决定「是否使用物种专用模型」：
- * 传了 key 且该物种有专用模型（目前只有 aloe），AI 服务会路由到专用模型；
+ * 传了 key 且该物种有专用模型（目前有 aloe / rose / orchid），AI 服务会路由到专用模型；
  * 不传则一律用通用 29 类模型 —— 芦荟上准确率会从 ~75% 掉到 ~8%，
  * 所以凡是能确定物种的场景都必须传。
  */
@@ -30,6 +30,14 @@ public final class SpeciesKeys {
         PREFIX.put("虎皮兰", "Snake_Plant");
         PREFIX.put("虎尾兰", "Snake_Plant");   // 同物异名
         PREFIX.put("吊兰", "Spider_Plant");
+        // v3 新增（模型覆盖 10 物种 / 44 类）
+        PREFIX.put("万寿菊", "Tagetes");
+        // v4 新增：兰花。通用 44 类里没有它，只有专用模型 specialized/orchid/，
+        // 所以这里必须补上，否则物种 key 为 null 会退回通用模型，
+        // 通用模型压根没有兰花类别，识别结果必然离谱。
+        PREFIX.put("兰花", "Orchid");
+        PREFIX.put("蝴蝶兰", "Orchid");
+        PREFIX.put("蝴蝶兰属", "Orchid");
     }
 
     private SpeciesKeys() {

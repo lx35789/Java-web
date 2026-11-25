@@ -63,17 +63,20 @@ public class CarePlanService {
     private final CareLogMapper logMapper;
     private final UserPlantMapper plantMapper;
     private final PlantSpeciesMapper speciesMapper;
+    private final com.greenthumb.mapper.PlantObservationMapper observationMapper;
 
     public CarePlanService(CarePlanMapper planMapper,
                            CareTaskMapper taskMapper,
                            CareLogMapper logMapper,
                            UserPlantMapper plantMapper,
-                           PlantSpeciesMapper speciesMapper) {
+                           PlantSpeciesMapper speciesMapper,
+                           com.greenthumb.mapper.PlantObservationMapper observationMapper) {
         this.planMapper = planMapper;
         this.taskMapper = taskMapper;
         this.logMapper = logMapper;
         this.plantMapper = plantMapper;
         this.speciesMapper = speciesMapper;
+        this.observationMapper = observationMapper;
     }
 
     /* ==================== 查询 ==================== */
@@ -199,6 +202,172 @@ public class CarePlanService {
         CarePlanVO vo = toVO(p);
         // 系数明细与计算过程只对本次生成返回，便于前端立即展示"为什么"
         return vo;
+    }
+
+    /* ==================== 自适应（闭环） ==================== */
+
+    /**
+     * 按实际记录校准浇水间隔 —— 把计划从「一次性算出来的静态值」变成「跟着这盆植物走」。
+     *
+     * <p>两类证据：
+     * <ul>
+     *   <li><b>健康指数趋势</b>：最近一次 ≤55 或单次下滑 ≥12 → 缩短；连续三次 ≥85 → 放宽；</li>
+     *   <li><b>实际浇水节奏</b>：用户总比计划早浇，说明偏干；总拖后，说明偏湿或不需要那么勤。</li>
+     * </ul>
+     *
+     * <p>每次改动幅度限制在 0.85~1.15 的乘积内，且间隔变化至少 1 天，
+     * 避免曲线抖一下就重排整个日历。改动原因写进 llm_explain，前端原样展示。
+     *
+     * @param trigger OBSERVATION / TASK_DONE / MANUAL，仅用于日志
+     * @return 是否真的改了间隔
+     */
+    @Transactional
+    public boolean adapt(Long userId, Long userPlantId, String trigger) {
+        CarePlanEntity plan = planMapper.selectOne(new LambdaQueryWrapper<CarePlanEntity>()
+                .eq(CarePlanEntity::getUserId, userId)
+                .eq(CarePlanEntity::getUserPlantId, userPlantId)
+                .eq(CarePlanEntity::getPlanType, "WATER")
+                .eq(CarePlanEntity::getIsActive, 1)
+                .orderByDesc(CarePlanEntity::getId)
+                .last("limit 1"));
+        if (plan == null || plan.getEffectiveIntervalDays() == null) {
+            return false;
+        }
+        int current = plan.getEffectiveIntervalDays();
+        LocalDate today = LocalDate.now();
+        List<String> reasons = new ArrayList<>();
+        double factor = 1.0;
+
+        // ---- 证据 1：健康指数趋势 ----
+        List<com.greenthumb.entity.PlantObservationEntity> obs = observationMapper.selectList(
+                new LambdaQueryWrapper<com.greenthumb.entity.PlantObservationEntity>()
+                        .eq(com.greenthumb.entity.PlantObservationEntity::getUserPlantId, userPlantId)
+                        .orderByDesc(com.greenthumb.entity.PlantObservationEntity::getObservedAt)
+                        .last("limit 4"));
+        java.util.Collections.reverse(obs);
+        if (obs.size() >= 2) {
+            int last = obs.get(obs.size() - 1).getHealthIndex() == null ? 100 : obs.get(obs.size() - 1).getHealthIndex();
+            int prev = obs.get(obs.size() - 2).getHealthIndex() == null ? 100 : obs.get(obs.size() - 2).getHealthIndex();
+            if (last <= 55) {
+                factor *= 0.9;
+                reasons.add("最近一次健康指数只有 " + last);
+            } else if (prev - last >= 12) {
+                factor *= 0.92;
+                reasons.add("健康指数从 " + prev + " 掉到 " + last);
+            } else if (last >= 85 && prev >= 85 && obs.size() >= 3
+                    && obs.get(obs.size() - 3).getHealthIndex() != null
+                    && obs.get(obs.size() - 3).getHealthIndex() >= 85) {
+                factor *= 1.08;
+                reasons.add("最近三次观测都在 85 以上");
+            }
+        }
+
+        // ---- 证据 2：实际浇水节奏（最近 3 个间隔）----
+        List<CareLogEntity> logs = logMapper.selectList(new LambdaQueryWrapper<CareLogEntity>()
+                .eq(CareLogEntity::getUserPlantId, userPlantId)
+                .eq(CareLogEntity::getLogType, "WATER")
+                .ge(CareLogEntity::getLoggedAt, today.minusDays(75).atStartOfDay())
+                .orderByAsc(CareLogEntity::getLoggedAt));
+        Double actualAvg = null;
+        if (logs.size() >= 2) {
+            int n = Math.min(3, logs.size() - 1);
+            long sum = 0;
+            int used = 0;
+            for (int i = logs.size() - n; i < logs.size(); i++) {
+                long d = java.time.Duration.between(
+                        logs.get(i - 1).getLoggedAt(), logs.get(i).getLoggedAt()).toDays();
+                if (d > 0) {
+                    sum += d;
+                    used++;
+                }
+            }
+            if (used > 0) {
+                actualAvg = (double) sum / used;
+            }
+        }
+        if (actualAvg != null && actualAvg >= 1.5) {
+            double ratio = actualAvg / current;
+            if (ratio <= 0.75) {
+                factor *= 0.9;
+                reasons.add(String.format("实际每 %.1f 天浇一次，比计划 %.0f 天短", actualAvg, (double) current));
+            } else if (ratio >= 1.35) {
+                factor *= 1.1;
+                reasons.add(String.format("实际每 %.1f 天浇一次，比计划 %.0f 天长", actualAvg, (double) current));
+            }
+        }
+
+        if (reasons.isEmpty()) {
+            return false;
+        }
+
+        int next = clamp(Math.round(current * factor), MIN_WATER_DAYS, MAX_WATER_DAYS);
+        // 幅度不足 1 天就不动，避免"每天都在改计划"的观感
+        if (next == current) {
+            return false;
+        }
+
+        String dir = next > current ? "放宽" : "缩短";
+        String explain = "因为" + String.join("；", reasons) + "，把浇水间隔从 "
+                + current + " 天" + dir + "到 " + next + " 天。";
+
+        plan.setEffectiveIntervalDays(next);
+        plan.setLlmExplain(explain);
+        plan.setUpdatedAt(LocalDateTime.now());
+        planMapper.updateById(plan);
+
+        reschedule(plan, today, next);
+
+        log.info("[自适应-{}] 植物 {} 浇水间隔 {} → {} 天：{}", trigger, userPlantId, current, next, explain);
+        return true;
+    }
+
+    /**
+     * 重排未来任务：先清掉今天及以后还没做的，再从最近一次实际浇水往后铺 HORIZON 条。
+     *
+     * <p>必须「先删再插」而不是原地改日期：uk_plan_due(plan_id, due_date) 是唯一索引，
+     * 原地改会让两条任务撞到同一天。
+     */
+    private void reschedule(CarePlanEntity plan, LocalDate today, int interval) {
+        List<CareTaskEntity> pending = taskMapper.selectList(new LambdaQueryWrapper<CareTaskEntity>()
+                .eq(CareTaskEntity::getPlanId, plan.getId())
+                .eq(CareTaskEntity::getStatus, "PENDING")
+                .ge(CareTaskEntity::getDueDate, today));
+        if (!pending.isEmpty()) {
+            taskMapper.deleteBatchIds(pending.stream().map(CareTaskEntity::getId).toList());
+        }
+
+        // 起点：最后一次已完成的浇水；没有就用今天
+        CareTaskEntity lastDone = taskMapper.selectOne(new LambdaQueryWrapper<CareTaskEntity>()
+                .eq(CareTaskEntity::getPlanId, plan.getId())
+                .eq(CareTaskEntity::getStatus, "DONE")
+                .orderByDesc(CareTaskEntity::getDueDate)
+                .last("limit 1"));
+        LocalDate base = lastDone == null || lastDone.getDueDate() == null ? today : lastDone.getDueDate();
+        LocalDate due = base.plusDays(interval);
+        while (due.isBefore(today)) {
+            due = due.plusDays(interval);
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        for (int i = 0; i < HORIZON_TASKS; i++) {
+            boolean exists = taskMapper.selectCount(new LambdaQueryWrapper<CareTaskEntity>()
+                    .eq(CareTaskEntity::getPlanId, plan.getId())
+                    .eq(CareTaskEntity::getDueDate, due)) > 0;
+            if (!exists) {
+                CareTaskEntity t = new CareTaskEntity();
+                t.setPlanId(plan.getId());
+                t.setUserId(plan.getUserId());
+                t.setUserPlantId(plan.getUserPlantId());
+                t.setTaskType(plan.getPlanType());
+                t.setDueDate(due);
+                t.setStatus("PENDING");
+                t.setReminded(0);
+                t.setCreatedAt(now);
+                t.setUpdatedAt(now);
+                taskMapper.insert(t);
+            }
+            due = due.plusDays(interval);
+        }
     }
 
     /* ==================== 系数计算 ==================== */

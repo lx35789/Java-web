@@ -209,7 +209,10 @@ export const CAUSE_CATEGORIES = {
  */
 export const DISEASE_COVERED_SPECIES = [
   '绿萝', '芦荟', '月季', '姜黄', '扶桑', '菊花',
-  '仙人掌', '虎皮兰', '虎尾兰', '吊兰'
+  '仙人掌', '虎皮兰', '虎尾兰', '吊兰', '万寿菊',
+  // v4：兰花只有专用模型（models/specialized/orchid），不在通用 44 类里，
+  // 后端 coveredSpecies 已包含它，这里同步兜底
+  '兰花', '蝴蝶兰'
 ]
 
 export const URGENCY = {

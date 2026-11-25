@@ -17,6 +17,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from .disease import classifier
+from . import plant_metrics as plant_metrics_mod
 
 app = FastAPI(
     title="GreenThumb AI Service",
@@ -40,7 +41,11 @@ def health() -> dict:
             # 模型扩到 9 种后没同步，导致仙人掌/虎皮兰/吊兰在界面上直接
             # 显示「暂无病害识别数据」并跳过，压根不调接口。
             # 让前端从模型本身读清单，就不会再漂移。
-            "species": classifier.species_set,
+            #
+            # 注意这里用 covered_species 而不是 species_set：
+            # 兰花只有专用模型、不在通用 44 类里，只报 species_set 会让
+            # 前端以为兰花不支持病害识别，从而根本不调本接口。
+            "species": classifier.covered_species,
         },
         # 物种专用模型清单：有专用模型的物种会走专用模型，准确率更高
         "specialized": classifier.describe()["specialized"],
@@ -83,3 +88,18 @@ async def predict_species(file: UploadFile = File(...), top_k: int = 3) -> JSONR
         raise HTTPException(status_code=400, detail="空文件")
 
     return JSONResponse(classifier.predict_species(raw, top_k=top_k))
+
+
+@app.post("/v1/plant/metrics")
+async def plant_metrics(file: UploadFile = File(...)) -> JSONResponse:
+    """
+    植物状态照片分析：绿/黄/褐像素占比 + 粗估健康分。
+
+    与病害识别是两条独立的路径：这里不判断"得了什么病"，只回答"看起来怎么样"，
+    供健康曲线补客观指标。不可用时返回 available=false，后端降级为纯主观快评。
+    """
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="空文件")
+
+    return JSONResponse(plant_metrics_mod.analyze(raw))

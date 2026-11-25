@@ -32,6 +32,13 @@ EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
 # 类别英文名 -> 中文展示名（用于 App 展示与标签文件）
 CN = {
+    "Rose_Nutrient_Deficiency": "月季·营养缺乏",
+    "Rose_Fungal_Leaf_Spot": "月季·真菌性叶斑病",
+    "Hibiscus_Bacterial_Leaf_Spot": "扶桑·细菌性叶斑病",
+    "Hibiscus_Nutrient_Deficiency": "扶桑·营养缺乏",
+    "Tagetes_Healthy": "万寿菊·健康",
+    "Tagetes_Alternaria_Leaf_Blight": "万寿菊·链格孢叶枯病",
+    "Tagetes_Pest_Damage": "万寿菊·虫害",
     "Aloe_Healthy": "芦荟·健康", "Aloe_Sunburn": "芦荟·晒伤",
     "Aloe_Leaf_Spot": "芦荟·叶斑病", "Aloe_Anthracnose": "芦荟·炭疽病",
     "Aloe_Rust": "芦荟·锈病",
@@ -60,13 +67,18 @@ CN = {
     "Spider_Plant_Healthy": "吊兰·健康",
     "Spider_Plant_Fungal_leaf_spot": "吊兰·真菌性叶斑病",
     "Spider_Plant_Leaf_Tip_Necrosis": "吊兰·叶尖坏死",
+    # v4：兰花（蝴蝶兰，专用模型；数据见 train/prepare_orchid_v4.py）
+    "Orchid_Healthy": "兰花·健康",
+    "Orchid_Anthracnose": "兰花·炭疽病",
+    "Orchid_Sunburn": "兰花·日灼",
+    "Orchid_Mite_Damage": "兰花·螨害",
 }
 
 LOGF = None
 
 # 类别码前缀 -> 物种名。用于把 Aloe_Anthracnose 拆成 (Aloe, Anthracnose)
 SPECIES_PREFIX = ["Aloe", "Chrysanthemum", "Hibiscus", "Money_Plant", "Rose", "Turmeric",
-                  "Snake_Plant", "Spider_Plant", "Cactus"]
+                  "Snake_Plant", "Spider_Plant", "Cactus", "Tagetes", "Orchid"]
 
 
 def split_code(code):
@@ -112,11 +124,17 @@ class BlackBgReplace:
     背景一半用真实图片（有纹理），一半用随机纯色，避免模型又学到新的"固定背景捷径"。
     """
 
-    def __init__(self, bg_images, p=1.0, threshold=25, feather=1.2):
+    def __init__(self, bg_images, p=1.0, threshold=25, feather=1.2, scale_range=None):
         self.bg = list(bg_images or [])
         self.p = p
         self.threshold = threshold
         self.feather = feather
+        # 尺度抖动 (min, max)：把叶片按该比例缩放后再贴到背景上。
+        # 不打开时叶片始终铺满画面 —— 模型会依赖「叶片占满画面」这个训练集
+        # 专属特征，真实整株照（叶片只占 20%~40%）就崩。
+        # 兰花实测：叶片缩到 40% 时 top1 从 95.4% 掉到 66.2%，错判集中在
+        # 健康→日灼（浅色区域被当成漂白坏死）。打开后主要就是修这个。
+        self.scale_range = tuple(scale_range) if scale_range else None
 
     def __call__(self, img):
         if random.random() > self.p:
@@ -127,6 +145,12 @@ class BlackBgReplace:
             cover = float(m.mean())
             if cover > 0.98 or m.sum() < 200:
                 return img                      # 本来就没黑底（或整张全黑，跳过）
+            # 只有「近黑像素占了相当比例」才当成棚拍黑底图。
+            # 真实照片（尤其逆光/树荫背景）也会有 5%~10% 的暗部，
+            # 若一律按掩膜替换，会把画面里的暗背景抠掉换成别的背景，
+            # 反而制造出不存在的伪影。芦荟那批图黑底占 74%~87%，阈值 15% 足够区分。
+            if (1.0 - cover) < 0.15:
+                return img
             w, h = img.size
             if self.bg and random.random() < 0.5:
                 b = random.choice(self.bg)
@@ -143,6 +167,33 @@ class BlackBgReplace:
             # 掩膜轻微羽化，避免出现训练集里不存在的硬边
             from PIL import ImageFilter
             mm = Image.fromarray((m * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(self.feather))
+
+            if self.scale_range:
+                # 抠出叶片 → 随机缩放 → 贴到背景任意位置。
+                # 训练时就把「叶片大小」铺开到真实拍照的分布，模型不再
+                # 依赖「叶片填满画面」；同时因为合成用的是同一张羽化掩膜，
+                # 边界自然，不会出现矩形硬边。
+                ys, xs = np.where(m)
+                if ys.size == 0:
+                    return img
+                y0, y1 = int(ys.min()), int(ys.max()) + 1
+                x0, x1 = int(xs.min()), int(xs.max()) + 1
+                leaf = a[y0:y1, x0:x1]
+                lmask_img = mm.crop((x0, y0, x1, y1))
+                lh, lw = leaf.shape[:2]
+                s = random.uniform(*self.scale_range)
+                # 等比缩放：病斑形状本身是判据，拉伸会削弱它
+                k = min(w * s / lw, h * s / lh)
+                nw, nh = max(16, int(lw * k)), max(16, int(lh * k))
+                leaf_arr = np.asarray(Image.fromarray(leaf).resize((nw, nh), Image.BILINEAR), np.float32)
+                lalpha = (np.asarray(lmask_img.resize((nw, nh), Image.BILINEAR), np.float32) / 255.0)[..., None]
+                canvas = bg.astype(np.float32)
+                ox = random.randint(0, max(0, w - nw))
+                oy = random.randint(0, max(0, h - nh))
+                roi = canvas[oy:oy + nh, ox:ox + nw]
+                canvas[oy:oy + nh, ox:ox + nw] = leaf_arr * lalpha + roi * (1 - lalpha)
+                return Image.fromarray(np.clip(canvas, 0, 255).astype(np.uint8))
+
             alpha = (np.asarray(mm, np.float32) / 255.0)[..., None]
             out = a.astype(np.float32) * alpha + bg.astype(np.float32) * (1 - alpha)
             return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
@@ -349,6 +400,10 @@ def stratified_split(items, classes, ratios=(0.7, 0.15, 0.15), seed=42, group_sp
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
+    ap.add_argument("--extra-data", nargs="*", default=[],
+                    help="Additional read-only ImageFolder roots, merged by class")
+    ap.add_argument("--class-prefix", nargs="*", default=[],
+                    help="Keep only classes whose code starts with one of these prefixes")
     ap.add_argument("--out", required=True)
     ap.add_argument("--arch", default="mobilenetv3_small_100")
     ap.add_argument("--img-size", type=int, default=160)
@@ -359,6 +414,8 @@ def main():
     ap.add_argument("--workers", type=int, default=0)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--pretrained", type=int, default=1)
+    ap.add_argument("--init-checkpoint", default="",
+                    help="Warm-start matching weights from an existing best.pt")
     ap.add_argument("--export-onnx", type=int, default=1)
     ap.add_argument("--bg-random", type=float, default=0.0,
                     help="背景随机化的概率 0~1（0=关闭）。让模型忽略背景，见 RandomBackground 注释")
@@ -367,6 +424,11 @@ def main():
                     help="自动裁掉黑边（针对芦荟那种'叶片+黑底'的图）；1=开 0=关")
     ap.add_argument("--replace-bg", type=float, default=0.0,
                     help="黑底替换概率 0~1（芦荟那类'叶片+黑底'数据建议设 1.0）")
+    ap.add_argument("--replace-bg-scale", nargs=2, type=float, default=None,
+                    metavar=("MIN", "MAX"),
+                    help="配合 --replace-bg 的尺度抖动：叶片按该比例缩放后贴回背景。"
+                         "真实整株照的叶片只占画面 20%%~40%%，不开这项模型会依赖"
+                         "「叶片填满画面」；建议 0.35 1.0")
     ap.add_argument("--group-split", type=int, default=1,
                     help="按原图组切分 1=开（防增广图跨训练/测试泄漏）0=按文件切分")
     args = ap.parse_args()
@@ -384,7 +446,16 @@ def main():
     log("输出目录: %s" % args.out)
     log("CPU 线程数: %d ; CUDA: %s" % (torch.get_num_threads(), torch.cuda.is_available()))
 
-    items = scan(args.data)
+    data_roots = [args.data, *args.extra_data]
+    items = []
+    for root in data_roots:
+        found = scan(root)
+        log("扫描数据根: %s -> %d 张" % (root, len(found)))
+        items.extend(found)
+    if args.class_prefix:
+        prefixes = tuple(args.class_prefix)
+        items = [(path, code) for path, code in items if code.startswith(prefixes)]
+        log("按类别前缀过滤 %s：%d 张" % (prefixes, len(items)))
     if not items:
         log("!! 没找到图片，检查路径")
         sys.exit(1)
@@ -417,7 +488,7 @@ def main():
     s = args.img_size
     bg_pool = collect_backgrounds(args.bg_dir) if (args.bg_random > 0 or args.replace_bg > 0) else []
     tf_tr = T.Compose([
-        BlackBgReplace(bg_pool, p=args.replace_bg),
+        BlackBgReplace(bg_pool, p=args.replace_bg, scale_range=args.replace_bg_scale),
         T.RandomResizedCrop(s, scale=(0.7, 1.0)),
         T.RandomHorizontalFlip(),
         T.RandomRotation(15),
@@ -429,6 +500,9 @@ def main():
     if args.replace_bg > 0:
         log("已启用黑底替换：p=%.2f（用黑底当掩膜合成到真实背景，背景素材 %d 张）"
             % (args.replace_bg, len(bg_pool)))
+    if args.replace_bg_scale:
+        log("已启用尺度抖动：叶片缩放 %s（模拟整株照里叶片只占部分画面）"
+            % "~".join("%.2f" % v for v in args.replace_bg_scale))
     if args.bg_random > 0:
         log("已启用背景随机化：p=%.2f 背景素材=%d 张（目录 %s）"
             % (args.bg_random, len(bg_pool), args.bg_dir or "随机纯色"))
@@ -469,6 +543,19 @@ def main():
     except Exception as e:
         log("!! 预训练权重加载失败（%r），改为从零训练" % (e,))
         model = timm.create_model(args.arch, pretrained=False, num_classes=len(classes))
+
+    if args.init_checkpoint:
+        state = torch.load(args.init_checkpoint, map_location="cpu", weights_only=True)
+        if isinstance(state, dict) and "state_dict" in state:
+            state = state["state_dict"]
+        target = model.state_dict()
+        compatible = {
+            key: value for key, value in state.items()
+            if key in target and tuple(value.shape) == tuple(target[key].shape)
+        }
+        model.load_state_dict(compatible, strict=False)
+        log("热启动检查点: %s（复用 %d 个张量，分类头重新初始化）"
+            % (args.init_checkpoint, len(compatible)))
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(dev)

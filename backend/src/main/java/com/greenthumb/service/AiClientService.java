@@ -217,6 +217,62 @@ public class AiClientService {
         }
     }
 
+    /**
+     * 植物状态照片分析：绿色 / 黄色 / 褐色像素占比。
+     *
+     * <p>用途与病害识别完全不同 —— 它不判断"得了什么病"，只回答"这株植物
+     * 现在看起来怎么样"，用来给健康曲线补客观指标。所以 AI 服务不可用时
+     * 只返回 available=false，调用方降级为"仅主观快评"，不阻断记录。
+     */
+    public PlantMetrics plantMetrics(byte[] imageBytes, String filename) {
+        if (imageBytes == null || imageBytes.length == 0) {
+            return new PlantMetrics(false, "图片内容为空", 0, 0, 0, 0, 0);
+        }
+        String boundary = "----GreenThumb" + UUID.randomUUID().toString().replace("-", "");
+        try {
+            byte[] body = multipartBody(boundary, "file",
+                    filename == null || filename.isBlank() ? "photo.jpg" : filename, imageBytes);
+            HttpRequest req = HttpRequest.newBuilder(URI.create(baseUrl + "/v1/plant/metrics"))
+                    .timeout(timeout)
+                    .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                    .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                    .build();
+            HttpResponse<String> resp = http.send(req,
+                    HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (resp.statusCode() != 200) {
+                return new PlantMetrics(false, "AI 服务返回 HTTP " + resp.statusCode(), 0, 0, 0, 0, 0);
+            }
+            JsonNode root = json.readTree(resp.body());
+            if (!root.path("available").asBoolean(false)) {
+                String why = root.path("reason").isMissingNode() || root.path("reason").isNull()
+                        ? "色彩分析不可用" : root.path("reason").asText();
+                return new PlantMetrics(false, why, 0, 0, 0, 0, 0);
+            }
+            return new PlantMetrics(true, null,
+                    root.path("greenRatio").asDouble(0),
+                    root.path("yellowRatio").asDouble(0),
+                    root.path("brownRatio").asDouble(0),
+                    root.path("plantPixels").asInt(0),
+                    root.path("healthHint").asInt(0));
+        } catch (Exception e) {
+            log.warn("调用植物状态分析失败：{}", rootMessage(e));
+            return new PlantMetrics(false, "AI 服务调用失败：" + rootMessage(e), 0, 0, 0, 0, 0);
+        }
+    }
+
+    /**
+     * 照片色彩分析结果。
+     *
+     * @param greenRatio  绿色像素占比 0~1
+     * @param yellowRatio 黄色像素占比 0~1
+     * @param brownRatio  褐色像素占比 0~1
+     * @param plantPixels 前景像素数，太小说明没拍到植株或糊了
+     * @param healthHint  仅凭颜色给出的 0-100 粗估，供参考
+     */
+    public record PlantMetrics(boolean available, String reason,
+                               double greenRatio, double yellowRatio, double brownRatio,
+                               int plantPixels, int healthHint) {}
+
     /* ==================== 内部 ==================== */
 
     /** 手拼 multipart/form-data —— JDK 的 HttpClient 没有内置的 multipart builder */

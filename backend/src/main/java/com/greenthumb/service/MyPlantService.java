@@ -58,6 +58,7 @@ public class MyPlantService {
     private final CareTaskMapper careTaskMapper;
     private final PlantPhotoMapper plantPhotoMapper;
     private final DiseaseRecordMapper diseaseRecordMapper;
+    private final com.greenthumb.mapper.PlantObservationMapper observationMapper;
 
     public MyPlantService(UserPlantMapper userPlantMapper,
                           PlantSpeciesMapper plantSpeciesMapper,
@@ -65,7 +66,8 @@ public class MyPlantService {
                           CareLogMapper careLogMapper,
                           CareTaskMapper careTaskMapper,
                           PlantPhotoMapper plantPhotoMapper,
-                          DiseaseRecordMapper diseaseRecordMapper) {
+                          DiseaseRecordMapper diseaseRecordMapper,
+                          com.greenthumb.mapper.PlantObservationMapper observationMapper) {
         this.userPlantMapper = userPlantMapper;
         this.plantSpeciesMapper = plantSpeciesMapper;
         this.carePlanMapper = carePlanMapper;
@@ -73,6 +75,7 @@ public class MyPlantService {
         this.careTaskMapper = careTaskMapper;
         this.plantPhotoMapper = plantPhotoMapper;
         this.diseaseRecordMapper = diseaseRecordMapper;
+        this.observationMapper = observationMapper;
     }
 
     /* ================= 列表 ================= */
@@ -213,24 +216,97 @@ public class MyPlantService {
     }
 
     /**
-     * 成长时间线：把「拍过的照片」按时间倒序返回。
+     * 单株连续时间轴：把「人做了什么」(care_log)、「植物怎么样」(observation)、
+     * 「拍过什么」(photo)、「查出什么病」(diagnosis) 合并成一条按时间倒序的流。
      *
-     * <p>结构对齐 frontend（mock 版）：{ userPlantId, photos: [{id, date, emoji, note}] }。
-     * 前端只读 photos，别的字段不要乱加。
+     * <p>之前这里只返回照片，详情页因此是三块割裂的卡片，看不出
+     * 「浇了水 → 三天后叶子蔫了 → 诊断出根腐」这种因果。合并后才是这株植物的一生。
      *
-     * <p>数据来源是 plant_photo（拍照记录），不是 plant_observation ——
-     * 后者是叶面积/健康分的计算产物，目前还没有稳定写入，拿它做时间线会空。
+     * <p>返回同时保留 photos 字段（旧的成长时间线在用），新增 events 是主数据。
      */
     public java.util.Map<String, Object> timeline(Long userId, Long plantId) {
-        getOwned(userId, plantId);   // 校验归属
+        getOwned(userId, plantId);
 
+        List<Event> all = new java.util.ArrayList<>();
+
+        // 1) 状态观测
+        for (com.greenthumb.entity.PlantObservationEntity o : observationMapper.selectList(
+                new LambdaQueryWrapper<com.greenthumb.entity.PlantObservationEntity>()
+                        .eq(com.greenthumb.entity.PlantObservationEntity::getUserPlantId, plantId)
+                        .orderByDesc(com.greenthumb.entity.PlantObservationEntity::getObservedAt)
+                        .last("limit 60"))) {
+            Event e = event(o.getObservedAt(), "OBSERVATION", "状态观测");
+            e.m.put("id", "obs-" + o.getId());
+            e.m.put("title", "状态观测 · 健康指数 " + (o.getHealthIndex() == null ? "—" : o.getHealthIndex()));
+            e.m.put("detail", o.getNote());
+            e.m.put("healthIndex", o.getHealthIndex());
+            e.m.put("source", o.getSource());
+            all.add(e);
+        }
+
+        // 2) 养护动作
+        for (CareLogEntity l : careLogMapper.selectList(
+                new LambdaQueryWrapper<CareLogEntity>()
+                        .eq(CareLogEntity::getUserPlantId, plantId)
+                        .orderByDesc(CareLogEntity::getLoggedAt)
+                        .last("limit 60"))) {
+            String label = switch (l.getLogType() == null ? "" : l.getLogType()) {
+                case "WATER" -> "浇水";
+                case "FERTILIZE" -> "施肥";
+                case "PRUNE" -> "修剪";
+                case "REPOT" -> "换盆";
+                case "PEST" -> "除虫";
+                default -> "养护";
+            };
+            Event e = event(l.getLoggedAt(), "CARE", label);
+            e.m.put("id", "log-" + l.getId());
+            e.m.put("title", label);
+            String detail = l.getDetail();
+            if (l.getAmount() != null) {
+                detail = (detail == null || detail.isBlank() ? "" : detail + " · ")
+                        + l.getAmount().stripTrailingZeros().toPlainString()
+                        + (l.getUnit() == null ? "" : l.getUnit());
+            }
+            e.m.put("detail", detail);
+            e.m.put("logType", l.getLogType());
+            e.m.put("fromTask", l.getTaskId() != null);
+            all.add(e);
+        }
+
+        // 3) 照片
         List<PlantPhotoEntity> photos = plantPhotoMapper.selectList(
                 new LambdaQueryWrapper<PlantPhotoEntity>()
                         .eq(PlantPhotoEntity::getUserPlantId, plantId)
                         .orderByDesc(PlantPhotoEntity::getCreatedAt)
-                        .last("limit 50"));
+                        .last("limit 40"));
+        for (PlantPhotoEntity p : photos) {
+            Event e = event(p.getCreatedAt(), "PHOTO", "拍照记录");
+            e.m.put("id", "photo-" + p.getId());
+            e.m.put("title", "拍照记录");
+            e.m.put("detail", p.getPhotoType());
+            e.m.put("url", p.getUrl());
+            all.add(e);
+        }
 
-        List<java.util.Map<String, Object>> items = photos.stream().map(p -> {
+        // 4) 诊断
+        for (DiseaseRecordEntity d : diseaseRecordMapper.selectList(
+                new LambdaQueryWrapper<DiseaseRecordEntity>()
+                        .eq(DiseaseRecordEntity::getUserPlantId, plantId)
+                        .orderByDesc(DiseaseRecordEntity::getCreatedAt)
+                        .last("limit 40"))) {
+            Event e = event(d.getCreatedAt(), "DIAGNOSIS", "诊断");
+            e.m.put("id", "diag-" + d.getId());
+            e.m.put("title", "诊断 · " + (d.getPredictedCode() == null ? "未命名" : d.getPredictedCode()));
+            e.m.put("detail", d.getDiagnosisType());
+            e.m.put("status", d.getStatus());
+            all.add(e);
+        }
+
+        all.sort((a, b) -> b.at.compareTo(a.at));
+        List<java.util.Map<String, Object>> events = all.stream()
+                .limit(60).map(x -> x.m).toList();
+
+        List<java.util.Map<String, Object>> photoItems = photos.stream().map(p -> {
             java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
             m.put("id", p.getId());
             m.put("date", p.getCreatedAt() == null ? "" : p.getCreatedAt().format(DATE));
@@ -242,8 +318,31 @@ public class MyPlantService {
 
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("userPlantId", plantId);
-        out.put("photos", items);
+        out.put("events", events);
+        out.put("photos", photoItems);
         return out;
+    }
+
+    /** 时间轴内部排序载体：at 用于排序，m 是对外结构 */
+    private static final class Event {
+        final LocalDateTime at;
+        final java.util.Map<String, Object> m;
+
+        Event(LocalDateTime at, java.util.Map<String, Object> m) {
+            this.at = at;
+            this.m = m;
+        }
+    }
+
+    private static Event event(LocalDateTime at, String type, String fallbackTitle) {
+        LocalDateTime t = at == null ? LocalDateTime.now() : at;
+        java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("type", type);
+        m.put("time", t.format(ISO));
+        m.put("date", t.format(DATE));
+        m.put("clock", t.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm")));
+        m.put("title", fallbackTitle);
+        return new Event(t, m);
     }
 
     /* ================= 新增 ================= */

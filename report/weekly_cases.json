@@ -1,0 +1,30 @@
+[
+  {
+    "species": "仙人掌",
+    "class": "Cactus_Dactylopius_Opuntia",
+    "label": "仙人掌 · 胭脂虫危害",
+    "image": "D:\\indoor-plant-data\\combined_v2\\Cactus_Dactylopius_Opuntia\\g0000__Dactylopius_opuntia (1)_0000.jpg",
+    "out": "Cactus_Dactylopius_Opuntia"
+  },
+  {
+    "species": "万寿菊",
+    "class": "Tagetes_Alternaria_Leaf_Blight",
+    "label": "万寿菊 · 链格孢叶枯病",
+    "image": "C:\\Users\\lenovo\\greenthumb\\experiments\\data\\mendeley_v3\\Tagetes_Alternaria_Leaf_Blight\\m001ca0ecbff0__IMG_20241112_162315__805c108c.jpg",
+    "out": "Tagetes_Alternaria_Leaf_Blight"
+  },
+  {
+    "species": "吊兰",
+    "class": "Spider_Plant_Fungal_leaf_spot",
+    "label": "吊兰 · 真菌性叶斑病",
+    "image": "D:\\indoor-plant-data\\combined_v2\\Spider_Plant_Fungal_leaf_spot\\g0000__Spider_Plant_Fungal_leaf_spot_001_0000.jpg",
+    "out": "Spider_Plant_Fungal_leaf_spot"
+  },
+  {
+    "species": "虎皮兰",
+    "class": "Snake_Plant_Anthracnose",
+    "label": "虎皮兰 · 炭疽病",
+    "image": "D:\\indoor-plant-data\\combined_v2\\Snake_Plant_Anthracnose\\g0000__Snake_Plant_Anthracnose_001_0000.jpg",
+    "out": "Snake_Plant_Anthracnose"
+  }
+]

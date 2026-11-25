@@ -24,6 +24,8 @@ mysql -u root -p greenthumb < db/schema.sql
 mysql -u root -p greenthumb < db/seed.sql          # 14 个物种
 mysql -u root -p greenthumb < db/seed_disease.sql  # 29 个病害知识（v1）
 mysql -u root -p greenthumb < db/seed_disease_v2.sql # +8 个病害知识（v2，可重复执行）
+mysql -u root -p greenthumb < db/seed_species_v3.sql # +万寿菊（v3）
+mysql -u root -p greenthumb < db/seed_disease_v3.sql # +7 个病害知识（v3）
 mysql -u root -p greenthumb < db/seed_symptom.sql  # 症状规则
 ```
 
@@ -91,43 +93,54 @@ npm run dev
 
 `ai-service/models/` **不进仓库**（每个 17MB）。首次运行前二选一：
 
-**方式 A：自己训练**（需要数据集，见 `ai-service/train/README`）
+**方式 A：使用当前 v3 模型**
+
+当前工作区已部署 **44 类 / 10 物种** 通用模型和 **月季 10 类** 专用模型。
+重新生成 v3 的完整命令、数据映射和逐类指标见
+`docs/26-模型v3-10物种44类.md`。
+
+如需自己训练（需要数据集，见 `ai-service/train/README`）：
 ```bash
-# 先把多个来源的数据合并、去重、按原图分组并缩放到 448px
-python ai-service/train/prep_combined.py --cap-groups 400 --max-side 448
+# 从三个分卷 ZIP 提取明确标注的叶片样本并缩放到 448px
+python ai-service/train/prepare_mendeley_v3.py \
+  --zip <part1.zip> --zip <part2.zip> --zip <part3.zip> \
+  --out experiments/data/mendeley_v3 --max-side 448
 
 python ai-service/train/train_indoor.py \
-  --data D:\indoor-plant-data\combined_v2 --out D:\indoor-plant-data\general_v2 \
-  --arch mobilenetv3_large_100 --img-size 160 --epochs 25 --batch 64 \
-  --cap 0 --group-split 1
-
-python ai-service/train/export_to_service.py \
-  --src D:\indoor-plant-data\general_v2 --dst ai-service/models
+  --data D:\indoor-plant-data\combined_v2 \
+  --extra-data experiments/data/mendeley_v3 \
+  --out experiments/data/general_v3 \
+  --arch mobilenetv3_large_100 --img-size 160 --epochs 20 --batch 64 \
+  --lr 2e-3 --cap 800 --group-split 1 --pretrained 0 \
+  --init-checkpoint D:\indoor-plant-data\general_v2\best.pt
 ```
 
 > `--group-split 1` 不是可选项：数据里同一张原图可能被增广成多份，
 > 按文件随机切分会让副本跨训练/测试泄漏，准确率虚高且不报错。详见 `docs/25`。
 
-**方式 B：从 Release 下载**（推荐）
+**方式 B：从 Release 下载**
 
 ```bash
-# 37 类 / 9 物种（含仙人掌、虎皮兰、吊兰）
+# v1.1 是旧的 37 类 / 9 物种模型，仅用于回退
 https://github.com/lx35789/Java-web/releases/download/v1.1-models/greenthumb-models-v1.1.zip
 ```
+
+> 当前仓库尚未发布 v3 模型压缩包；新部署请使用工作区内的 `ai-service/models/`。
 
 解压后把 `models/` 整体放到 `ai-service/` 下即可，结构：
 
 ```
 ai-service/models/
-├── disease.onnx                 通用模型（37 类，9 物种）
+├── disease.onnx                 通用模型（44 类，10 物种）
 └── specialized/
-    └── aloe/disease.onnx        芦荟专用模型（5 类）
+    ├── aloe/disease.onnx        芦荟专用模型（5 类）
+    └── rose/disease.onnx        月季专用模型（10 类）
 ```
 
 模型缺失时服务**不会崩溃**，`/health` 返回 `available: false`，前端提示"识别暂不可用"。
 
-> ⚠️ **不要用 `v1.0-models`**：那是 29 类 / 6 物种的旧包，缺仙人掌、虎皮兰、吊兰三类
-> 共 8 个病害类别，用旧包时这三种植物做不了病害识别。
+> ⚠️ **不要用 `v1.0-models` 或 `v1.1-models` 替代当前 v3**：它们缺少万寿菊、
+> 月季营养缺乏/真菌性叶斑、扶桑细菌性叶斑/营养缺乏等新类别。
 
 ### ★ 部署后必须跑自检
 
@@ -152,6 +165,13 @@ python ai-service/train/verify_deploy.py --token <登录token>
 
 ```
 greenthumb/
+├── datasets/                 ★ 数据集唯一入口（指向 D:\greenthumb-datasets）
+│   ├── INDEX.md              全部数据集的来源/类别/张数/许可，先看这个
+│   ├── general-37cls/        37 类通用模型主数据
+│   ├── mendeley-10cls/       10 类补充数据
+│   ├── orchid-4cls/          兰花 4 类专用模型数据
+│   ├── orchid-eval-80/       兰花域外评测集（不进训练）
+│   └── raw/                  未加工的原始底料
 ├── frontend/                 Vue 3 + Vite + Element Plus
 │   └── src/
 │       ├── views/            页面（plants / diagnose / care / profile）
@@ -165,10 +185,20 @@ greenthumb/
 │       └── recognition/      物种识别降级链（百度 → Pl@ntNet）
 ├── ai-service/               FastAPI + ONNX Runtime
 │   ├── app/disease.py        多模型注册表 + 按物种路由
+│   ├── models/               线上模型（通用 + specialized/{aloe,rose,orchid}）
 │   └── train/                训练与导出脚本
-├── db/                       建表与种子数据
-└── experiments/              可行性验证实验（历史）
+├── db/                       建表与种子数据（schema + seed_*）
+├── docs/                     方案与上线记录（01~30，编号即顺序）
+├── experiments/              实验区
+│   ├── data/                 训练产物与兼容链接（数据集实体在 datasets/）
+│   ├── multidl.py            多模态大模型打标工具（辅助自采数据标注）
+│   └── legacy/               历史可行性验证脚本（run_validation / layer1~4 等）
+└── report/                   周报 PPT 生成脚本与成品渲染图
 ```
+
+数据集都放在 D 盘（14 GB，C 盘只有 49 GB 余量），项目里的 `datasets/` 与
+`experiments/data/` 是指向它的目录链接。`D:\indoor-plant-data\` 作为兼容层保留，
+老脚本的硬编码路径照旧可用。详见 `datasets/INDEX.md`。
 
 ---
 
@@ -224,7 +254,7 @@ AI 服务（内部，端口 8000）：
 - **不要提交** `application-dev.yml`、`*.onnx`、数据集、`node_modules`
 - 训练数据统一预处理成 **448px** 落盘，否则训练会慢 5 倍以上（4000px 原图现场解码是瓶颈）
 - Windows 上训练用 `--workers 0`，多进程 DataLoader 反而更慢
-- 数据集放进 `experiments/data/`（已在 .gitignore 中）
+- 数据集统一放在 `datasets/`（D 盘，已 gitignore），新增数据先登记进 `datasets/INDEX.md`
 
 ---
 
@@ -232,12 +262,15 @@ AI 服务（内部，端口 8000）：
 
 | 模型 | 骨干 | 输入 | 测试准确率 | Top-3 |
 |---|---|---|---|---|
+| 通用 44 类（v3） | MobileNetV3-Large | 160 | **91.00%** | 98.10% |
+| 月季专用 10 类（v3） | MobileNetV3-Large | 224 | **90.46%** | 98.34% |
 | 通用 37 类（v2） | MobileNetV3-Large | 160 | **93.29%** | 98.10% |
 | 通用 29 类（v1） | MobileNetV3-Large | 160 | 93.69% | 98.11% |
 | 芦荟专用 5 类 | MobileNetV3-Large | 224 | **74.81%** | 95.05% |
 
-> v2 把覆盖从 6 物种 / 29 类扩到 **9 物种 / 37 类**（新增仙人掌、虎皮兰、吊兰），
-> 类别变多的情况下准确率只降 0.4 个百分点。详见 `docs/25-模型v2-9物种37类.md`。
+> v3 把覆盖从 9 物种 / 37 类扩到 **10 物种 / 44 类**，新增月季、扶桑和万寿菊
+> 共 7 个真实拍摄类别。通用模型总体指标受新增难类影响，但月季通过专用模型路由
+> 明显改善了新增类表现。详见 `docs/26-模型v3-10物种44类.md`。
 
 > 以上为同分布留出测试集成绩。真实拍照场景（换背景/构图/光照）会明显下降，
 > 这是本领域公认的域偏移问题，详见 `docs/` 下的实验记录。

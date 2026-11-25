@@ -42,6 +42,9 @@ EXPECTED_CN = {
     "Cactus": "仙人掌",
     "Snake_Plant": "虎皮兰",
     "Spider_Plant": "吊兰",
+    "Tagetes": "万寿菊",
+    # v4：只有专用模型，不在通用 44 类里
+    "Orchid": "兰花",
 }
 
 
@@ -78,7 +81,30 @@ def check_local_files():
     species = sorted({v["species"] for v in labels.values()})
     ok("labels.json  %d 类 / %d 物种" % (len(labels), len(species)))
     print("        物种: " + "、".join(species))
-    return {"classes": len(labels), "species": species}, problems
+
+    # 专用模型也是「实际能识别」的一部分。兰花这种只训了专用模型、
+    # 通用模型里根本没有的物种，只核对通用 labels.json 会得出
+    # 「后端多报了兰花」的错误结论，或者压根发现不了漏部署。
+    spec = {}
+    spec_dir = os.path.join(MODEL_DIR, "specialized")
+    if os.path.isdir(spec_dir):
+        for name in sorted(os.listdir(spec_dir)):
+            d = os.path.join(spec_dir, name)
+            lf = os.path.join(d, "labels.json")
+            mf = os.path.join(d, "meta.json")
+            n = os.path.join(d, "disease.onnx")
+            if not (os.path.isfile(lf) and os.path.isfile(n)):
+                bad("专用模型 %s 目录不完整（缺 disease.onnx 或 labels.json），会被跳过" % name)
+                problems += 1
+                continue
+            sl = json.load(open(lf, encoding="utf-8"))
+            sp = sorted({v["species"] for v in sl.values()})
+            spec[name] = {"classes": len(sl), "species": sp}
+            species = sorted(set(species) | set(sp))
+            ok("专用模型 %-8s %d 类 / 物种 %s%s"
+               % (name, len(sl), "、".join(sp) or "?",
+                  "" if os.path.isfile(mf) else "  (缺 meta.json)"))
+    return {"classes": len(labels), "species": species, "specialized": spec}, problems
 
 
 def check_ai_service(base):
